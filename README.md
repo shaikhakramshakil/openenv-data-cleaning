@@ -1,3 +1,19 @@
+---
+title: Data Cleaning Environment
+emoji: 🧹
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 7860
+pinned: false
+license: bsd-3-clause
+tags:
+  - openenv
+  - data-cleaning
+  - data-quality
+  - reinforcement-learning
+---
+
 # 🧹 Data Cleaning Environment — OpenEnv
 
 A real-world **OpenEnv environment** for training and evaluating AI agents on **data quality assessment**. Agents analyze datasets with planted errors and must identify, classify, and fix data quality issues — one of the most time-consuming tasks in data science.
