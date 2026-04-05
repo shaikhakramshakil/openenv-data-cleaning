@@ -128,30 +128,34 @@ openenv-data-cleaning/
 # Install dependencies
 pip install -r requirements.txt
 
-# Run the server
-uvicorn server.app:app --host 0.0.0.0 --port 8000 --reload
+# Run the server (use port 7860 to match HF Spaces)
+uvicorn server.app:app --host 0.0.0.0 --port 7860 --reload
 ```
 
 ### Docker
 
 ```bash
 # Build
-docker build -t data-cleaning-env:latest -f server/Dockerfile .
+docker build -t data-cleaning-env:latest .
 
 # Run
-docker run -d -p 8000:8000 data-cleaning-env:latest
+docker run -d -p 7860:7860 data-cleaning-env:latest
 
 # Health check
-curl http://localhost:8000/health
+curl http://localhost:7860/health
 ```
 
 ### Run Baseline Inference
 
 ```bash
+# First, start the environment server (Docker or local)
+docker run -d -p 7860:7860 data-cleaning-env:latest
+
+# Then run inference
 export API_BASE_URL="https://router.huggingface.co/v1"
 export MODEL_NAME="meta-llama/Llama-3.3-70B-Instruct"
 export HF_TOKEN="your_token_here"
-export ENV_URL="http://localhost:8000"
+export ENV_URL="http://localhost:7860"
 
 python inference.py
 ```

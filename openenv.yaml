@@ -38,7 +38,7 @@ tasks:
 # Server configuration
 server:
   entrypoint: server.app:app
-  port: 8000
+  port: 7860
   dockerfile: Dockerfile
 
 # Action/Observation types

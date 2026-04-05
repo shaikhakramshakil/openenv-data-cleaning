@@ -4,10 +4,21 @@ Baseline inference script for the Data Cleaning OpenEnv environment.
 This script runs a standard LLM agent against all 3 tasks and produces
 scores. It uses the OpenAI Client with the required environment variables.
 
+IMPORTANT: Start the environment server before running this script:
+    # Option 1: Docker (recommended)
+    docker build -t data-cleaning-env .
+    docker run -p 7860:7860 data-cleaning-env
+
+    # Option 2: Local development
+    uvicorn server.app:app --host 0.0.0.0 --port 7860
+
 Required environment variables:
     API_BASE_URL  - The API endpoint for the LLM
     MODEL_NAME    - The model identifier to use
     HF_TOKEN      - Your Hugging Face / API key
+
+Optional:
+    ENV_URL       - Environment server URL (default: http://localhost:7860)
 
 Log format (mandatory):
     [START] task=<task> env=<env> model=<model>
@@ -29,7 +40,8 @@ API_BASE_URL = os.environ.get("API_BASE_URL", "https://router.huggingface.co/v1"
 MODEL_NAME = os.environ.get("MODEL_NAME", "meta-llama/Llama-3.3-70B-Instruct")
 API_KEY = os.environ.get("HF_TOKEN", "")
 ENV_NAME = "data-cleaning-env"
-ENV_URL = os.environ.get("ENV_URL", "http://localhost:8000")
+# Default to 7860 (HF Spaces port) - use 8000 for local dev with uvicorn
+ENV_URL = os.environ.get("ENV_URL", "http://localhost:7860")
 
 TASKS = ["task_1_identify", "task_2_classify", "task_3_fix"]
 
