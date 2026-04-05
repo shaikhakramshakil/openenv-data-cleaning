@@ -10,7 +10,7 @@ readme = "README.md"
 license = {text = "BSD-3-Clause"}
 requires-python = ">=3.10"
 authors = [
-    {name = "Shaikh Akram", email = "shaikhakramshakil@example.com"},
+    {name = "Shaikh Akram", email = "shaikhakramshakil@gmail.com"},
 ]
 keywords = ["openenv", "data-cleaning", "ai-agent", "reinforcement-learning", "data-quality"]
 classifiers = [

@@ -128,8 +128,8 @@ def get_ground_truth_errors() -> List[Dict[str, Any]]:
             "column": "signup_date",
             "error_type": "invalid_format",
             "current_value": "2024-02-30",
-            "corrected_value": "2024-02-28",
-            "description": "February 30th does not exist. The latest valid date in Feb 2024 is 2024-02-28 (leap year) or 2024-02-29.",
+            "corrected_value": "2024-02-29",
+            "description": "February 30th does not exist. 2024 is a leap year, so the latest valid date is 2024-02-29.",
         },
         {
             "row_id": 5,

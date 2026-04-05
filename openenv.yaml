@@ -7,7 +7,7 @@ description: >-
   classify, and fix data quality issues.
 
 author: Shaikh Akram
-email: shaikhakramshakil@example.com
+email: shaikhakramshakil@gmail.com
 license: BSD-3-Clause
 
 # Environment metadata
@@ -39,7 +39,7 @@ tasks:
 server:
   entrypoint: server.app:app
   port: 8000
-  dockerfile: server/Dockerfile
+  dockerfile: Dockerfile
 
 # Action/Observation types
 types:

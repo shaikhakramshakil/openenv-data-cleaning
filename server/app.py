@@ -73,21 +73,33 @@ async def http_reset(data: Dict[str, Any] = None):
 
 @app.post("/step")
 async def http_step(data: Dict[str, Any]):
-    """Execute a step (stateless — requires full state, mainly for debugging)."""
-    return {"error": "Use WebSocket /ws endpoint for stateful interaction."}
+    """Execute a single step (stateless — creates a fresh env per request)."""
+    task_name = data.get("task_name", DEFAULT_TASK)
+    action_type = data.get("action_type", "")
+    value = data.get("value", "")
+
+    env = DataCleaningEnvironment(task_name=task_name)
+    env.reset()
+
+    from models import DataCleaningAction
+    action = DataCleaningAction(action_type=action_type, value=value)
+    obs = env.step(action)
+    return _serialize_observation(obs)
 
 
 @app.get("/state")
 async def http_state():
-    """Get state (stateless endpoint — returns template)."""
-    return {
-        "episode_id": "",
-        "step_count": 0,
-        "task_name": DEFAULT_TASK,
-        "total_errors": 10,
-        "errors_found": 0,
-        "cumulative_reward": 0.0,
-    }
+    """Get state (stateless — returns default state template). Use /ws for real sessions."""
+    from models import DataCleaningState
+    state = DataCleaningState(
+        episode_id="",
+        step_count=0,
+        task_name=DEFAULT_TASK,
+        total_errors=10,
+        errors_found=0,
+        cumulative_reward=0.0,
+    )
+    return state.model_dump()
 
 
 # ─── WebSocket Endpoint (stateful, persistent session) ───────────────
