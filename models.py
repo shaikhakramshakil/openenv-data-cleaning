@@ -1,16 +1,16 @@
 """
 Type-safe models for the Data Cleaning OpenEnv environment.
 
-Defines the Action, Observation, and State dataclasses that form
-the contract between the client and server.
+Uses Pydantic BaseModel as required by the OpenEnv spec for typed
+Action, Observation, and State models between client and server.
 """
 
-from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from pydantic import BaseModel, Field
 
-@dataclass
-class DataCleaningAction:
+
+class DataCleaningAction(BaseModel):
     """
     Action sent by the agent to the environment.
 
@@ -29,8 +29,7 @@ class DataCleaningAction:
     value: str = ""
 
 
-@dataclass
-class DataCleaningObservation:
+class DataCleaningObservation(BaseModel):
     """
     Observation returned by the environment to the agent.
 
@@ -52,20 +51,19 @@ class DataCleaningObservation:
     dataset_text: str = ""
     task_name: str = ""
     task_description: str = ""
-    available_actions: List[str] = field(default_factory=list)
+    available_actions: List[str] = Field(default_factory=list)
     feedback: str = ""
     step_number: int = 0
     max_steps: int = 10
     num_rows: int = 0
     num_columns: int = 0
-    column_names: List[str] = field(default_factory=list)
+    column_names: List[str] = Field(default_factory=list)
     done: bool = False
     reward: float = 0.0
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
-@dataclass
-class DataCleaningState:
+class DataCleaningState(BaseModel):
     """
     Episode state metadata.
 

@@ -148,7 +148,7 @@ curl http://localhost:8000/health
 ### Run Baseline Inference
 
 ```bash
-export API_BASE_URL="https://api-inference.huggingface.co/v1"
+export API_BASE_URL="https://router.huggingface.co/v1"
 export MODEL_NAME="meta-llama/Llama-3.3-70B-Instruct"
 export HF_TOKEN="your_token_here"
 export ENV_URL="http://localhost:8000"
