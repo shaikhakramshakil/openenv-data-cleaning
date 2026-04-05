@@ -25,7 +25,7 @@ from openai import OpenAI
 
 # ─── Configuration ────────────────────────────────────────────────────
 
-API_BASE_URL = os.environ.get("API_BASE_URL", "https://api-inference.huggingface.co/v1")
+API_BASE_URL = os.environ.get("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME = os.environ.get("MODEL_NAME", "meta-llama/Llama-3.3-70B-Instruct")
 API_KEY = os.environ.get("HF_TOKEN", "")
 ENV_NAME = "data-cleaning-env"
@@ -64,6 +64,7 @@ def call_llm(client: OpenAI, system_prompt: str, user_prompt: str) -> str:
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
+        print(f"  [WARN] LLM call failed: {e}", file=sys.stderr, flush=True)
         return f"ERROR: {e}"
 
 

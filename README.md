@@ -190,11 +190,12 @@ python inference.py
 
 | Task | Score | Description |
 |------|-------|-------------|
-| task_1_identify | ~0.75 | LLM identifies most error rows |
-| task_2_classify | ~0.55 | LLM classifies about half correctly |
-| task_3_fix | ~0.35 | LLM struggles with exact corrections |
+| task_1_identify | **1.000** | LLM perfectly identifies all error rows |
+| task_2_classify | **0.980** | LLM classifies nearly all errors correctly |
+| task_3_fix | **0.700** | LLM fixes most errors but struggles with some corrections |
+| **Average** | **0.893** | Strong baseline across all tasks |
 
-*Scores measured with `meta-llama/Llama-3.3-70B-Instruct`*
+*Scores measured with `meta-llama/Llama-3.3-70B-Instruct` via HF Inference API*
 
 ---
 
