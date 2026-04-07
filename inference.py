@@ -36,9 +36,11 @@ from openai import OpenAI
 
 # ─── Configuration ────────────────────────────────────────────────────
 
-API_BASE_URL = os.environ.get("API_BASE_URL", "https://router.huggingface.co/v1")
-MODEL_NAME = os.environ.get("MODEL_NAME", "meta-llama/Llama-3.3-70B-Instruct")
-API_KEY = os.environ.get("HF_TOKEN", "")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Llama-3.3-70B-Instruct")
+HF_TOKEN = os.getenv("HF_TOKEN")
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
+
 ENV_NAME = "data-cleaning-env"
 # Default to 7860 (HF Spaces port) - use 8000 for local dev with uvicorn
 ENV_URL = os.environ.get("ENV_URL", "http://localhost:7860")
@@ -292,7 +294,7 @@ async def main():
     print(f"Environment: {ENV_URL}")
     print("=" * 60)
 
-    llm_client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+    llm_client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
     scores = {}
     for task in TASKS:
