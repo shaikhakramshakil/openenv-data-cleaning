@@ -97,6 +97,33 @@ Agents get **feedback** after each step with hints about what they got right/wro
 
 ## 🏗 Architecture
 
+### Agent ↔ Environment Interaction Flow
+
+```mermaid
+sequenceDiagram
+    participant Agent as LLM Agent
+    participant API as FastAPI Server (WebSocket)
+    participant Env as DataCleaningEnvironment
+
+    Agent->>API: Connect (ws://localhost:7860/ws)
+    Note over API,Env: Session Instantiated
+    
+    Agent->>API: {"type": "reset", "data": {"task_name": "task_1"}}
+    API->>Env: env.reset()
+    Env-->>API: returns Initial Observation
+    API-->>Agent: {"type": "result", "data": {"observation": {...}}}
+    
+    loop Up to Max Steps (until Done)
+        Note left of Agent: Parse observation &<br/>prompt LLM
+        Agent->>API: {"type": "step", "data": {"action_type": "...", "value": "..."}}
+        API->>Env: env.step(action)
+        Env-->>API: returns Observation, Reward, Done
+        API-->>Agent: {"type": "result", "data": {"reward": 0.5, "done": false, "observation": {...}}}
+    end
+```
+
+### Directory Structure
+
 ```
 openenv-data-cleaning/
 ├── server/
