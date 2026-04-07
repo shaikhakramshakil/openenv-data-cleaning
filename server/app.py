@@ -25,10 +25,10 @@ MAX_CONCURRENT_ENVS = int(os.environ.get("MAX_CONCURRENT_ENVS", "100"))
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup/shutdown lifecycle."""
-    print(f"🚀 Data Cleaning Environment starting (default task: {DEFAULT_TASK})")
-    print(f"📊 Max concurrent environments: {MAX_CONCURRENT_ENVS}")
+    print(f"Data Cleaning Environment starting (default task: {DEFAULT_TASK})")
+    print(f"Max concurrent environments: {MAX_CONCURRENT_ENVS}")
     yield
-    print("🛑 Data Cleaning Environment shutting down")
+    print("Data Cleaning Environment shutting down")
 
 
 app = FastAPI(
@@ -40,6 +40,12 @@ app = FastAPI(
 
 
 # ─── HTTP Endpoints (stateless, for debugging) ───────────────────────
+
+@app.get("/")
+async def root():
+    """Redirect root to the web UI so the HF Space doesn't show 'Not Found'."""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/web")
 
 
 @app.get("/health")
@@ -206,7 +212,7 @@ async def web_ui():
     <html>
     <head><title>Data Cleaning Environment</title></head>
     <body>
-        <h1>🧹 Data Cleaning Environment</h1>
+        <h1>Data Cleaning Environment</h1>
         <p>This is an OpenEnv environment for AI agent data quality assessment.</p>
         <h2>Available Tasks</h2>
         <ul>
@@ -216,11 +222,11 @@ async def web_ui():
         </ul>
         <h2>API Endpoints</h2>
         <ul>
-            <li>GET /health — Health check</li>
-            <li>GET /info — Environment info</li>
-            <li>POST /reset — Reset environment</li>
-            <li>WS /ws — WebSocket for stateful sessions</li>
-            <li>GET /docs — OpenAPI documentation</li>
+            <li>GET /health -- Health check</li>
+            <li>GET /info -- Environment info</li>
+            <li>POST /reset -- Reset environment</li>
+            <li>WS /ws -- WebSocket for stateful sessions</li>
+            <li>GET /docs -- OpenAPI documentation</li>
         </ul>
     </body>
     </html>
