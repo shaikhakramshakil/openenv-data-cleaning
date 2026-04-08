@@ -21,6 +21,9 @@ from data import (
 from models import DataCleaningAction, DataCleaningObservation, DataCleaningState
 
 
+SCORE_EPSILON = 0.001
+
+
 # Task definitions
 TASKS = {
     "task_1_identify": {
@@ -164,11 +167,11 @@ class DataCleaningEnvironment:
             self._done = True
             # Auto-submit the best submission if any
             if self._last_submission is not None:
-                reward = self._best_score
+                reward = _normalize_task_score(self._best_score)
                 feedback = f"Step limit reached. Auto-submitting your best answer (score: {self._best_score:.2f})."
             else:
-                reward = 0.0
-                feedback = "Step limit reached with no submission. Score: 0.0."
+                reward = SCORE_EPSILON
+                feedback = "Step limit reached with no submission. Minimal score assigned."
             self._last_reward = reward
             return self._make_observation(feedback=feedback, reward=reward)
 
@@ -243,7 +246,7 @@ class DataCleaningEnvironment:
         f1 = 2 * precision * recall / max(precision + recall, 1e-9)
 
         # Partial reward based on F1 score
-        reward = round(f1, 3)
+        reward = _normalize_task_score(f1)
         self._last_reward = reward
         self._cumulative_reward += reward
 
@@ -310,12 +313,12 @@ class DataCleaningEnvironment:
         # Score: 50% for finding the right location, 50% for correct type
         location_score = location_matches / max(total_gt, 1)
         type_score = full_matches / max(total_gt, 1)
-        reward = round(0.5 * location_score + 0.5 * type_score, 3)
+        reward = 0.5 * location_score + 0.5 * type_score
 
         # Penalize false positives lightly
         false_positives = max(0, len(errors) - location_matches)
         penalty = min(0.1, false_positives * 0.02)
-        reward = max(0.0, round(reward - penalty, 3))
+        reward = _normalize_task_score(reward - penalty)
 
         self._last_reward = reward
         self._cumulative_reward += reward
@@ -390,12 +393,12 @@ class DataCleaningEnvironment:
         location_score = location_matches / max(total_gt, 1)
         type_score = type_matches / max(total_gt, 1)
         fix_score = fix_matches / max(total_gt, 1)
-        reward = round(0.3 * location_score + 0.3 * type_score + 0.4 * fix_score, 3)
+        reward = 0.3 * location_score + 0.3 * type_score + 0.4 * fix_score
 
         # Penalize false positives
         false_positives = max(0, len(fixes) - location_matches)
         penalty = min(0.1, false_positives * 0.02)
-        reward = max(0.0, round(reward - penalty, 3))
+        reward = _normalize_task_score(reward - penalty)
 
         self._last_reward = reward
         self._cumulative_reward += reward
@@ -430,11 +433,11 @@ class DataCleaningEnvironment:
         self._done = True
 
         if self._last_submission is not None:
-            final_reward = self._best_score
+            final_reward = _normalize_task_score(self._best_score)
             feedback = f"Submission accepted! Final score: {final_reward:.3f}"
         else:
-            final_reward = 0.0
-            feedback = "Submitted with no answer. Score: 0.0. You need to provide an answer before submitting."
+            final_reward = SCORE_EPSILON
+            feedback = "Submitted with no answer. Minimal score assigned; provide an answer before submitting."
 
         self._last_reward = final_reward
         return self._make_observation(feedback=feedback, reward=final_reward)
@@ -474,3 +477,9 @@ def _is_close_numeric(a: Any, b: Any) -> bool:
         return abs(float(a) - float(b)) < 0.01
     except (ValueError, TypeError):
         return False
+
+
+def _normalize_task_score(score: float) -> float:
+    """Clamp and round task scores so they are always strictly between 0 and 1."""
+    bounded = min(max(float(score), SCORE_EPSILON), 1.0 - SCORE_EPSILON)
+    return round(bounded, 3)
