@@ -40,3 +40,4 @@ where = ["."]
 
 [project.scripts]
 server = "server.app:main"
+openenv-data-cleaning = "server.app:main"
