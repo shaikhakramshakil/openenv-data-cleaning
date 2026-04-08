@@ -15,7 +15,12 @@ from typing import Any, Dict
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from .environment import DataCleaningEnvironment, TASKS
+try:
+    # Module execution: python -m server.app
+    from .environment import DataCleaningEnvironment, TASKS
+except ImportError:
+    # Script execution: python server/app.py
+    from server.environment import DataCleaningEnvironment, TASKS
 
 # Read task name from environment variable (default: task_1_identify)
 DEFAULT_TASK = os.environ.get("OPENENV_TASK", "task_1_identify")
