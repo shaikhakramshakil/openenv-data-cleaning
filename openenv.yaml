@@ -1,56 +1,6 @@
-# OpenEnv Environment Manifest
+spec_version: 1
 name: data-cleaning-env
-version: 1.0.0
-description: >-
-  A real-world OpenEnv environment for training AI agents on data quality 
-  assessment. Agents analyze a dataset with planted errors and must identify, 
-  classify, and fix data quality issues.
-
-author: Shaikh Akram
-email: shaikhakramshakil@gmail.com
-license: BSD-3-Clause
-
-# Environment metadata
-tags:
-  - openenv
-  - data-cleaning
-  - data-quality
-  - ai-agent
-  - reinforcement-learning
-
-# Task definitions
-tasks:
-  - name: task_1_identify
-    description: "Identify which rows contain data quality errors (Easy)"
-    difficulty: easy
-    max_steps: 5
-    
-  - name: task_2_classify
-    description: "Identify and classify errors by type (Medium)"
-    difficulty: medium
-    max_steps: 5
-    
-  - name: task_3_fix
-    description: "Identify, classify, and fix all data quality errors (Hard)"
-    difficulty: hard
-    max_steps: 5
-
-# Server configuration
-server:
-  entrypoint: server.app:app
-  port: 7860
-  dockerfile: Dockerfile
-
-# Action/Observation types
-types:
-  action: models.DataCleaningAction
-  observation: models.DataCleaningObservation
-  state: models.DataCleaningState
-
-# Inference
-inference:
-  script: inference.py
-  env_vars:
-    - API_BASE_URL
-    - MODEL_NAME
-    - HF_TOKEN
+type: space
+runtime: fastapi
+app: server.app:app
+port: 7860

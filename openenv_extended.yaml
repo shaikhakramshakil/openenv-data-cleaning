@@ -1,0 +1,55 @@
+spec_version: 1
+name: data-cleaning-env
+version: 1.1.0
+type: space
+runtime: fastapi
+app: server.app:app
+port: 7860
+description: >-
+  A real-world OpenEnv environment for training AI agents on data quality 
+  assessment. Agents analyze a dataset with planted errors and must identify, 
+  classify, and fix data quality issues using advanced statistical tools.
+
+author: Shaikh Akram
+email: shaikhakramshakil@gmail.com
+license: BSD-3-Clause
+
+tags:
+  - openenv
+  - data-cleaning
+  - data-quality
+  - reinforcement-learning
+  - tool-use
+
+tasks:
+  - name: task_1_identify
+    description: "Identify which rows contain data quality errors (Easy)"
+    difficulty: easy
+    max_steps: 15
+    
+  - name: task_2_classify
+    description: "Identify and classify errors by type (Medium)"
+    difficulty: medium
+    max_steps: 15
+    
+  - name: task_3_fix
+    description: "Identify, classify, and fix all data quality errors (Hard)"
+    difficulty: hard
+    max_steps: 20
+
+  - name: task_4_insight
+    description: "Calculate quality insights using statistical reasoning (Expert)"
+    difficulty: expert
+    max_steps: 15
+
+types:
+  action: models.DataCleaningAction
+  observation: models.DataCleaningObservation
+  state: models.DataCleaningState
+
+inference:
+  script: inference.py
+  env_vars:
+    - API_BASE_URL
+    - MODEL_NAME
+    - HF_TOKEN

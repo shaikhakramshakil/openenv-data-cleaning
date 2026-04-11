@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openenv-data-cleaning"
-version = "1.0.0"
+version = "1.1.0"
 description = "OpenEnv environment for training AI agents on data quality assessment"
 readme = "README.md"
 license = {text = "BSD-3-Clause"}
@@ -29,6 +29,7 @@ dependencies = [
     "aiohttp>=3.9.0",
     "openai>=1.0.0",
     "openenv-core>=0.2.0",
+    "pyyaml>=6.0",
 ]
 
 [project.urls]
