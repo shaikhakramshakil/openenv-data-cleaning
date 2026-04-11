@@ -1,22 +1,21 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
 """
 Synthetic dataset with planted data quality errors.
 
-Contains realistic business data (customer records) with intentionally
-planted errors for the agent to discover. Each error has a known ground
-truth for deterministic grading.
-
-Error types:
-    - missing_value: Cell contains null/NaN/empty where data is expected
-    - invalid_format: Value doesn't match expected format (email, date, etc.)
-    - outlier: Value is statistically implausible (negative age, extreme amounts)
-    - duplicate: Row is an exact or near-duplicate of another row
-    - type_error: Value has wrong data type (string in numeric field)
-    - inconsistency: Values within a row contradict each other
+Includes a dynamic generator that can create datasets of any size with
+configurable error rates and advanced error types.
 """
 
+import random
 from typing import Any, Dict, List, Tuple
+from datetime import datetime, timedelta
 
-# Column definitions with expected types and validation rules
+# ─── Schema Definitions ────────────────────────────────────────────────
+
 COLUMNS = ["id", "name", "email", "age", "city", "signup_date", "plan", "monthly_amount", "status"]
 
 COLUMN_DESCRIPTIONS = {
@@ -31,7 +30,6 @@ COLUMN_DESCRIPTIONS = {
     "status": "Account status (string, one of: active, inactive, suspended, cancelled)",
 }
 
-# Plan pricing rules (for inconsistency detection)
 PLAN_PRICING = {
     "free": 0.00,
     "basic": 9.99,
@@ -39,205 +37,179 @@ PLAN_PRICING = {
     "enterprise": 99.99,
 }
 
+# ─── Seed Data for Generation ──────────────────────────────────────────
+
+FIRST_NAMES = ["Alice", "Bob", "Carol", "David", "Emma", "Frank", "Grace", "Henry", "Ivy", "Jack", "Karen", "Leo", "Mia", "Noah", "Olivia", "Paul", "Quinn", "Rose", "Sam", "Tara"]
+LAST_NAMES = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez", "Wilson", "Anderson", "Thomas", "Taylor", "Moore", "Jackson", "Martin"]
+CITIES = ["New York", "Los Angeles", "Chicago", "Houston", "Phoenix", "Philadelphia", "San Antonio", "San Diego", "Dallas", "San Jose", "Austin", "Jacksonville", "Fort Worth", "Columbus", "Charlotte", "San Francisco", "Indianapolis", "Seattle", "Denver", "Washington"]
+PLANS = list(PLAN_PRICING.keys())
+STATUSES = ["active", "inactive", "suspended", "cancelled"]
+
+# ─── Generator Class ──────────────────────────────────────────────────
+
+class DatasetGenerator:
+    def __init__(self, seed: int = 42):
+        self.random = random.Random(seed)
+
+    def generate_row(self, row_id: int) -> Dict[str, Any]:
+        first = self.random.choice(FIRST_NAMES)
+        last = self.random.choice(LAST_NAMES)
+        name = f"{first} {last}"
+        email = f"{first.lower()}.{last.lower()}@{self.random.choice(['gmail.com', 'yahoo.com', 'outlook.com', 'company.co', 'mail.com'])}"
+        age = self.random.randint(18, 75)
+        city = self.random.choice(CITIES)
+        
+        # Signup date within the last 2 years
+        days_ago = self.random.randint(0, 730)
+        signup_date = (datetime(2024, 8, 1) - timedelta(days=days_ago)).strftime("%Y-%m-%d")
+        
+        plan = self.random.choice(PLANS)
+        amount = PLAN_PRICING[plan]
+        status = self.random.choice(STATUSES)
+        
+        return {
+            "id": row_id,
+            "name": name,
+            "email": email,
+            "age": age,
+            "city": city,
+            "signup_date": signup_date,
+            "plan": plan,
+            "monthly_amount": amount,
+            "status": status,
+        }
+
+    def create_dataset(self, n_rows: int = 50, error_rate: float = 0.2) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """
+        Generates a clean and a dirty dataset.
+        Returns: (dirty_dataset, ground_truth_errors)
+        """
+        dataset = [self.generate_row(i + 1) for i in range(n_rows)]
+        dirty_dataset = [row.copy() for row in dataset]
+        ground_truth_errors = []
+
+        # Target number of errors
+        n_errors = int(n_rows * error_rate * 2) # Roughly 2 errors per "dirty" row selection
+        
+        error_types = ["missing_value", "invalid_format", "outlier", "duplicate", "type_error", "inconsistency"]
+        
+        affected_rows = self.random.sample(range(n_rows), int(n_rows * error_rate))
+        
+        for row_idx in affected_rows:
+            row_id = row_idx + 1
+            error_type = self.random.choice(error_types)
+            col = self.random.choice(COLUMNS[1:]) # Skip ID
+            
+            error_info = {
+                "row_id": row_id,
+                "column": col,
+                "error_type": error_type,
+                "current_value": dirty_dataset[row_idx][col],
+                "corrected_value": dataset[row_idx][col],
+                "description": ""
+            }
+
+            if error_type == "missing_value":
+                dirty_dataset[row_idx][col] = "" if self.random.random() > 0.5 else None
+                error_info["current_value"] = dirty_dataset[row_idx][col]
+                error_info["description"] = f"Value in '{col}' is missing."
+            
+            elif error_type == "invalid_format":
+                if col == "email":
+                    dirty_dataset[row_idx][col] = dirty_dataset[row_idx][col].split("@")[0] + "@" + self.random.choice(["gmail", "yahoo", "outlook"])
+                    error_info["description"] = "Email is missing a top-level domain (TLD)."
+                elif col == "signup_date":
+                    dirty_dataset[row_idx][col] = dirty_dataset[row_idx][col][:8] + "32" # Invalid day
+                    error_info["description"] = "Date has an impossible day (32)."
+                elif col == "status":
+                    dirty_dataset[row_idx][col] = dirty_dataset[row_idx][col][:-1] # Typo
+                    error_info["description"] = f"Typo in status value: '{dirty_dataset[row_idx][col]}'."
+                else:
+                    dirty_dataset[row_idx][col] = "???"
+                    error_info["description"] = f"Invalid format in '{col}'."
+                error_info["current_value"] = dirty_dataset[row_idx][col]
+
+            elif error_type == "outlier":
+                if col == "age":
+                    val = self.random.choice([-5, 150, 250, 0])
+                    dirty_dataset[row_idx][col] = val
+                    error_info["description"] = f"Age {val} is outside the valid range (18-100)."
+                elif col == "monthly_amount":
+                    val = 9999.99
+                    dirty_dataset[row_idx][col] = val
+                    error_info["description"] = f"Amount ${val} is an extreme outlier for this plan."
+                else:
+                    dirty_dataset[row_idx][col] = 999
+                    error_info["description"] = "Value is an outlier."
+                error_info["current_value"] = dirty_dataset[row_idx][col]
+
+            elif error_type == "duplicate":
+                # Duplicate another clean row but keep this unique ID
+                source_idx = (row_idx + 1) % n_rows
+                for c in COLUMNS[1:]: # Copy everything except ID
+                    dirty_dataset[row_idx][c] = dataset[source_idx][c]
+                error_info["column"] = "ALL"
+                error_info["description"] = f"Row {row_id} is a duplicate of Row {source_idx + 1}."
+                error_info["current_value"] = "Duplicate Row"
+                error_info["corrected_value"] = "Unique Data"
+
+            elif error_type == "type_error":
+                if col == "age":
+                    dirty_dataset[row_idx][col] = "twenty"
+                elif col == "monthly_amount":
+                    dirty_dataset[row_idx][col] = "unknown"
+                else:
+                    dirty_dataset[row_idx][col] = True
+                error_info["current_value"] = dirty_dataset[row_idx][col]
+                error_info["description"] = f"Wrong data type in '{col}'."
+
+            elif error_type == "inconsistency":
+                if col == "monthly_amount":
+                    # Mismatch plan and amount
+                    wrong_plan = self.random.choice([p for p in PLANS if p != dirty_dataset[row_idx]["plan"]])
+                    dirty_dataset[row_idx]["monthly_amount"] = PLAN_PRICING[wrong_plan]
+                    error_info["description"] = f"Price ${dirty_dataset[row_idx]['monthly_amount']} does not match plan '{dirty_dataset[row_idx]['plan']}'."
+                else:
+                    dirty_dataset[row_idx][col] = "inconsistent"
+                    error_info["description"] = "Logic inconsistency detected."
+                error_info["current_value"] = dirty_dataset[row_idx][col]
+
+            ground_truth_errors.append(error_info)
+
+        return dirty_dataset, ground_truth_errors
+
+# ─── Global State for "Standard" Environment ─────────────────────────
+
+_gen = DatasetGenerator(seed=42)
+_dirty_data, _ground_truth = _gen.create_dataset(n_rows=30, error_rate=0.4) # Doubled size and complexity from previous
 
 def get_clean_dataset() -> List[Dict[str, Any]]:
-    """Return the clean (error-free) version of the dataset."""
-    return [
-        {"id": 1,  "name": "Alice Johnson",    "email": "alice.johnson@gmail.com",    "age": 34, "city": "New York",      "signup_date": "2024-01-15", "plan": "premium",    "monthly_amount": 29.99, "status": "active"},
-        {"id": 2,  "name": "Bob Smith",         "email": "bob.smith@yahoo.com",        "age": 28, "city": "Los Angeles",   "signup_date": "2024-02-20", "plan": "basic",      "monthly_amount": 9.99,  "status": "active"},
-        {"id": 3,  "name": "Carol Williams",    "email": "carol.w@outlook.com",        "age": 45, "city": "Chicago",       "signup_date": "2024-03-10", "plan": "enterprise", "monthly_amount": 99.99, "status": "active"},
-        {"id": 4,  "name": "David Brown",       "email": "david.brown@company.co",     "age": 52, "city": "Houston",       "signup_date": "2024-01-28", "plan": "free",       "monthly_amount": 0.00,  "status": "inactive"},
-        {"id": 5,  "name": "Emma Davis",        "email": "emma.davis@email.com",       "age": 31, "city": "Phoenix",       "signup_date": "2024-04-05", "plan": "basic",      "monthly_amount": 9.99,  "status": "active"},
-        {"id": 6,  "name": "Frank Miller",      "email": "frank.m@domain.org",         "age": 67, "city": "Philadelphia",  "signup_date": "2024-02-14", "plan": "premium",    "monthly_amount": 29.99, "status": "active"},
-        {"id": 7,  "name": "Grace Wilson",      "email": "grace.wilson@mail.com",      "age": 23, "city": "San Antonio",   "signup_date": "2024-05-01", "plan": "free",       "monthly_amount": 0.00,  "status": "active"},
-        {"id": 8,  "name": "Henry Taylor",      "email": "henry.t@inbox.com",          "age": 41, "city": "San Diego",     "signup_date": "2024-03-22", "plan": "basic",      "monthly_amount": 9.99,  "status": "cancelled"},
-        {"id": 9,  "name": "Ivy Anderson",      "email": "ivy.anderson@webmail.com",   "age": 36, "city": "Dallas",        "signup_date": "2024-06-11", "plan": "enterprise", "monthly_amount": 99.99, "status": "active"},
-        {"id": 10, "name": "Jack Thomas",       "email": "jack.thomas@service.net",    "age": 29, "city": "San Jose",      "signup_date": "2024-04-18", "plan": "premium",    "monthly_amount": 29.99, "status": "active"},
-        {"id": 11, "name": "Karen Martinez",    "email": "karen.m@provider.com",       "age": 55, "city": "Austin",        "signup_date": "2024-01-07", "plan": "basic",      "monthly_amount": 9.99,  "status": "active"},
-        {"id": 12, "name": "Leo Garcia",        "email": "leo.garcia@fastmail.com",    "age": 19, "city": "Jacksonville",  "signup_date": "2024-07-03", "plan": "free",       "monthly_amount": 0.00,  "status": "active"},
-        {"id": 13, "name": "Mia Robinson",      "email": "mia.r@outlook.com",          "age": 48, "city": "Fort Worth",    "signup_date": "2024-02-28", "plan": "premium",    "monthly_amount": 29.99, "status": "suspended"},
-        {"id": 14, "name": "Noah Clark",        "email": "noah.clark@gmail.com",       "age": 33, "city": "Columbus",      "signup_date": "2024-05-19", "plan": "enterprise", "monthly_amount": 99.99, "status": "active"},
-        {"id": 15, "name": "Olivia Lewis",      "email": "olivia.l@yahoo.com",         "age": 27, "city": "Charlotte",     "signup_date": "2024-08-10", "plan": "basic",      "monthly_amount": 9.99,  "status": "active"},
-    ]
-
+    # Just for reference, we don't store the full clean set usually
+    return [] 
 
 def get_dirty_dataset() -> List[Dict[str, Any]]:
-    """
-    Return the dataset with planted errors.
-    
-    Errors are intentionally introduced to test agent data quality detection.
-    Each error has a corresponding entry in get_ground_truth_errors().
-    """
-    return [
-        # Row 1: CLEAN
-        {"id": 1,  "name": "Alice Johnson",    "email": "alice.johnson@gmail.com",    "age": 34,   "city": "New York",      "signup_date": "2024-01-15", "plan": "premium",    "monthly_amount": 29.99, "status": "active"},
-        # Row 2: ERROR - invalid email format (missing TLD)
-        {"id": 2,  "name": "Bob Smith",         "email": "bob.smith@yahoo",            "age": 28,   "city": "Los Angeles",   "signup_date": "2024-02-20", "plan": "basic",      "monthly_amount": 9.99,  "status": "active"},
-        # Row 3: ERROR - invalid date (Feb 30 doesn't exist)
-        {"id": 3,  "name": "Carol Williams",    "email": "carol.w@outlook.com",        "age": 45,   "city": "Chicago",       "signup_date": "2024-02-30", "plan": "enterprise", "monthly_amount": 99.99, "status": "active"},
-        # Row 4: CLEAN
-        {"id": 4,  "name": "David Brown",       "email": "david.brown@company.co",     "age": 52,   "city": "Houston",       "signup_date": "2024-01-28", "plan": "free",       "monthly_amount": 0.00,  "status": "inactive"},
-        # Row 5: ERROR - negative age (outlier)
-        {"id": 5,  "name": "Emma Davis",        "email": "emma.davis@email.com",       "age": -3,   "city": "Phoenix",       "signup_date": "2024-04-05", "plan": "basic",      "monthly_amount": 9.99,  "status": "active"},
-        # Row 6: ERROR - plan/amount inconsistency (premium plan but enterprise pricing)
-        {"id": 6,  "name": "Frank Miller",      "email": "frank.m@domain.org",         "age": 67,   "city": "Philadelphia",  "signup_date": "2024-02-14", "plan": "premium",    "monthly_amount": 99.99, "status": "active"},
-        # Row 7: CLEAN
-        {"id": 7,  "name": "Grace Wilson",      "email": "grace.wilson@mail.com",      "age": 23,   "city": "San Antonio",   "signup_date": "2024-05-01", "plan": "free",       "monthly_amount": 0.00,  "status": "active"},
-        # Row 8: ERROR - missing value (empty city)
-        {"id": 8,  "name": "Henry Taylor",      "email": "henry.t@inbox.com",          "age": 41,   "city": "",              "signup_date": "2024-03-22", "plan": "basic",      "monthly_amount": 9.99,  "status": "cancelled"},
-        # Row 9: ERROR - type error (age is a string)
-        {"id": 9,  "name": "Ivy Anderson",      "email": "ivy.anderson@webmail.com",   "age": "thirty-six", "city": "Dallas", "signup_date": "2024-06-11", "plan": "enterprise", "monthly_amount": 99.99, "status": "active"},
-        # Row 10: ERROR - duplicate of row 1 (same person, different ID)
-        {"id": 10, "name": "Alice Johnson",     "email": "alice.johnson@gmail.com",    "age": 34,   "city": "New York",      "signup_date": "2024-01-15", "plan": "premium",    "monthly_amount": 29.99, "status": "active"},
-        # Row 11: CLEAN
-        {"id": 11, "name": "Karen Martinez",    "email": "karen.m@provider.com",       "age": 55,   "city": "Austin",        "signup_date": "2024-01-07", "plan": "basic",      "monthly_amount": 9.99,  "status": "active"},
-        # Row 12: ERROR - invalid status value
-        {"id": 12, "name": "Leo Garcia",        "email": "leo.garcia@fastmail.com",    "age": 19,   "city": "Jacksonville",  "signup_date": "2024-07-03", "plan": "free",       "monthly_amount": 0.00,  "status": "actve"},
-        # Row 13: ERROR - impossible age (outlier, too high)
-        {"id": 13, "name": "Mia Robinson",      "email": "mia.r@outlook.com",          "age": 250,  "city": "Fort Worth",    "signup_date": "2024-02-28", "plan": "premium",    "monthly_amount": 29.99, "status": "suspended"},
-        # Row 14: CLEAN
-        {"id": 14, "name": "Noah Clark",        "email": "noah.clark@gmail.com",       "age": 33,   "city": "Columbus",      "signup_date": "2024-05-19", "plan": "enterprise", "monthly_amount": 99.99, "status": "active"},
-        # Row 15: ERROR - missing email (null value)
-        {"id": 15, "name": "Olivia Lewis",      "email": "",                           "age": 27,   "city": "Charlotte",     "signup_date": "2024-08-10", "plan": "basic",      "monthly_amount": 9.99,  "status": "active"},
-    ]
-
+    return _dirty_data
 
 def get_ground_truth_errors() -> List[Dict[str, Any]]:
-    """
-    Return the ground truth list of all planted errors.
-    
-    Each error entry contains:
-        - row_id: 1-indexed row number
-        - column: Column name where the error is
-        - error_type: Category of the error
-        - current_value: The erroneous value in the dirty dataset
-        - corrected_value: The correct value that should be there
-        - description: Human-readable explanation of the error
-    """
-    return [
-        {
-            "row_id": 2,
-            "column": "email",
-            "error_type": "invalid_format",
-            "current_value": "bob.smith@yahoo",
-            "corrected_value": "bob.smith@yahoo.com",
-            "description": "Email is missing a top-level domain (TLD). Should be 'bob.smith@yahoo.com'.",
-        },
-        {
-            "row_id": 3,
-            "column": "signup_date",
-            "error_type": "invalid_format",
-            "current_value": "2024-02-30",
-            "corrected_value": "2024-02-29",
-            "description": "February 30th does not exist. 2024 is a leap year, so the latest valid date is 2024-02-29.",
-        },
-        {
-            "row_id": 5,
-            "column": "age",
-            "error_type": "outlier",
-            "current_value": -3,
-            "corrected_value": 31,
-            "description": "Age is negative (-3), which is impossible. Correct value is 31.",
-        },
-        {
-            "row_id": 6,
-            "column": "monthly_amount",
-            "error_type": "inconsistency",
-            "current_value": 99.99,
-            "corrected_value": 29.99,
-            "description": "Premium plan costs $29.99/month, not $99.99. Amount is inconsistent with the plan.",
-        },
-        {
-            "row_id": 8,
-            "column": "city",
-            "error_type": "missing_value",
-            "current_value": "",
-            "corrected_value": "San Diego",
-            "description": "City field is empty. Should be 'San Diego'.",
-        },
-        {
-            "row_id": 9,
-            "column": "age",
-            "error_type": "type_error",
-            "current_value": "thirty-six",
-            "corrected_value": 36,
-            "description": "Age is stored as a word string 'thirty-six' instead of the integer 36.",
-        },
-        {
-            "row_id": 10,
-            "column": "name",
-            "error_type": "duplicate",
-            "current_value": "Alice Johnson",
-            "corrected_value": "Jack Thomas",
-            "description": "Row 10 is an exact duplicate of Row 1 (same name, email, age, city, date, plan). Should be a unique customer 'Jack Thomas'.",
-        },
-        {
-            "row_id": 12,
-            "column": "status",
-            "error_type": "invalid_format",
-            "current_value": "actve",
-            "corrected_value": "active",
-            "description": "Status 'actve' is a typo. Should be 'active'.",
-        },
-        {
-            "row_id": 13,
-            "column": "age",
-            "error_type": "outlier",
-            "current_value": 250,
-            "corrected_value": 48,
-            "description": "Age 250 is impossibly high. Correct value is 48.",
-        },
-        {
-            "row_id": 15,
-            "column": "email",
-            "error_type": "missing_value",
-            "current_value": "",
-            "corrected_value": "olivia.l@yahoo.com",
-            "description": "Email field is empty. Should be 'olivia.l@yahoo.com'.",
-        },
-    ]
-
+    return _ground_truth
 
 def get_error_row_ids() -> List[int]:
-    """Return just the row IDs that contain errors."""
-    return sorted(set(e["row_id"] for e in get_ground_truth_errors()))
-
+    return sorted(set(e["row_id"] for e in _ground_truth))
 
 def format_dataset_as_table(dataset: List[Dict[str, Any]]) -> str:
-    """
-    Format the dataset as a readable text table for the agent.
-    
-    Returns a plain-text table with aligned columns.
-    """
     if not dataset:
         return "(empty dataset)"
-
     headers = COLUMNS
-    
-    # Calculate column widths
-    col_widths = {}
-    for col in headers:
-        values = [str(row.get(col, "")) for row in dataset]
-        col_widths[col] = max(len(col), max(len(v) for v in values)) + 2
-
-    # Build header row
+    col_widths = {col: max(len(col), max((len(str(row.get(col, ""))) for row in dataset), default=0)) + 2 for col in headers}
     header_line = "| " + " | ".join(col.ljust(col_widths[col]) for col in headers) + " |"
     separator = "|-" + "-|-".join("-" * col_widths[col] for col in headers) + "-|"
-
-    # Build data rows
-    data_lines = []
-    for row in dataset:
-        line = "| " + " | ".join(str(row.get(col, "")).ljust(col_widths[col]) for col in headers) + " |"
-        data_lines.append(line)
-
+    data_lines = ["| " + " | ".join(str(row.get(col, "")).ljust(col_widths[col]) for col in headers) + " |" for row in dataset]
     return "\n".join([header_line, separator] + data_lines)
 
-
 def get_dataset_summary() -> str:
-    """Return a summary of the dataset structure and validation rules."""
-    return """Dataset: Customer Subscription Records
-Columns: id, name, email, age, city, signup_date, plan, monthly_amount, status
-Total rows: 15
+    return f"""Dataset: Customer Subscription Records (V2 - High Complexity)
+Columns: {', '.join(COLUMNS)}
+Total rows: {len(_dirty_data)}
 
 Validation Rules:
 - id: Sequential integers, must be unique
@@ -245,8 +217,17 @@ Validation Rules:
 - email: Valid email format (must contain @ and a valid TLD like .com, .org, .net, etc.)
 - age: Integer between 18 and 100
 - city: Non-empty string, valid US city name
-- signup_date: Valid date in YYYY-MM-DD format (no impossible dates like Feb 30)
-- plan: Must be one of: free, basic, premium, enterprise
+- signup_date: Valid date in YYYY-MM-DD format
+- plan: Must be one of: {', '.join(PLANS)}
 - monthly_amount: Must match plan pricing (free=$0.00, basic=$9.99, premium=$29.99, enterprise=$99.99)
-- status: Must be one of: active, inactive, suspended, cancelled
-- No duplicate rows (same name+email = duplicate)"""
+- status: Must be one of: {', '.join(STATUSES)}
+- No duplicate rows (same identity across different IDs)"""
+
+def get_validation_rules() -> Dict[str, Any]:
+    return {
+        "columns": COLUMN_DESCRIPTIONS,
+        "pricing": PLAN_PRICING,
+        "plans": PLANS,
+        "statuses": STATUSES,
+        "cities": CITIES
+    }
