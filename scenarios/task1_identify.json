@@ -1,0 +1,15 @@
+{
+    "task_name": "task_1_identify",
+    "difficulty": "easy",
+    "description": "Identify which rows contain data quality errors",
+    "max_steps": 15,
+    "available_actions": ["identify_errors", "check_schema", "search_reference", "run_statistics", "submit"],
+    "tools_recommended": ["check_schema", "run_statistics"],
+    "grading": {
+        "method": "f1_score",
+        "description": "F1 score comparing predicted error rows vs actual error rows",
+        "formula": "2 * (precision * recall) / (precision + recall)"
+    },
+    "prompt_template": "You are a data quality analyst. Review the dataset and identify which row IDs contain errors. Respond with JSON: {\"row_ids\": [...]}",
+    "expected_output_format": {"row_ids": "list of integers"}
+}

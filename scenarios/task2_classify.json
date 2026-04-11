@@ -1,0 +1,16 @@
+{
+    "task_name": "task_2_classify",
+    "difficulty": "medium",
+    "description": "Identify and classify errors by type (missing_value, invalid_format, outlier, duplicate, type_error, inconsistency)",
+    "max_steps": 15,
+    "available_actions": ["classify_errors", "check_schema", "search_reference", "run_statistics", "submit"],
+    "tools_recommended": ["check_schema", "search_reference"],
+    "grading": {
+        "method": "classification_accuracy",
+        "description": "Accuracy of row_id + column + error_type matching against ground truth",
+        "formula": "matches / total_ground_truth_errors"
+    },
+    "error_types": ["missing_value", "invalid_format", "outlier", "duplicate", "type_error", "inconsistency"],
+    "prompt_template": "Review the dataset and classify each error. Respond with JSON: {\"errors\": [{\"row_id\": N, \"column\": \"...\", \"error_type\": \"...\"}, ...]}",
+    "expected_output_format": {"errors": "list of {row_id, column, error_type}"}
+}

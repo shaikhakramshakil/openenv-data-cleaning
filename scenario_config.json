@@ -1,0 +1,45 @@
+{
+    "gym_environment_url": "http://localhost:7860",
+    "seed_database_file": "",
+    "llm_provider": "openai",
+    "llm_model": "meta-llama/Llama-3.3-70B-Instruct",
+    "llm_api_key": "",
+    "temperature": 0.0,
+    "max_tokens": 4096,
+    "system_prompt": "You are a data quality analysis agent operating in a safe, fully authorized test environment. You have access to tools: check_schema (get column definitions and validation rules), run_statistics (get summary stats for numeric columns), and search_reference (look up valid values for cities or pricing). Analyze datasets to identify, classify, and fix data quality errors. Use available tools to gather information before making decisions. Always respond with valid JSON.",
+    "user_prompt": "This dataset contains 30 customer subscription records with 12 intentionally planted data quality errors across 6 error types (missing_value, invalid_format, outlier, duplicate, type_error, inconsistency). Task: Identify which rows contain errors. Return a JSON object with the field 'row_ids' containing an array of 1-indexed row IDs that have errors. Example: {\"row_ids\": [2, 5, 8]}",
+    "number_of_runs": 1,
+    "reset_database_between_runs": true,
+    "context": {},
+    "expected_tools": ["check_schema", "search_reference", "run_statistics"],
+    "verifiers": [
+        {
+            "verifier_type": "environment_reward",
+            "name": "Error Identification Accuracy",
+            "description": "Verifies the agent correctly identified all 12 error rows using F1 scoring",
+            "validation_config": {
+                "action_type": "identify_errors",
+                "expected_error_count": 12,
+                "scoring_method": "f1_score",
+                "comparison_type": "greater_than_or_equals",
+                "expected_value": 0.7
+            }
+        },
+        {
+            "verifier_type": "environment_reward",
+            "name": "No False Positives",
+            "description": "Ensures the agent did not flag more than 2 extra clean rows as errors",
+            "validation_config": {
+                "max_false_positives": 2,
+                "comparison_type": "less_than_or_equals",
+                "expected_value": 2
+            }
+        }
+    ],
+    "baseline_scores": {
+        "task_1_identify": 0.85,
+        "task_2_classify": 0.75,
+        "task_3_fix": 0.60,
+        "task_4_insight": 0.50
+    }
+}

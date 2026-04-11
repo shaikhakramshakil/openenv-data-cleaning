@@ -1,0 +1,16 @@
+{
+    "task_name": "task_4_insight",
+    "difficulty": "expert",
+    "description": "Calculate the total monthly_amount for active users AFTER correcting all pricing inconsistencies",
+    "max_steps": 15,
+    "available_actions": ["answer_insight", "check_schema", "search_reference", "run_statistics", "submit"],
+    "tools_recommended": ["check_schema", "run_statistics", "search_reference"],
+    "grading": {
+        "method": "numeric_tolerance",
+        "description": "Exact match within $0.01 tolerance, partial credit for answers within $10",
+        "formula": "diff < 0.01 ? 1.0 : diff < 10 ? 0.5 : 0.0"
+    },
+    "requires_reasoning": true,
+    "prompt_template": "Using the available tools, calculate the total monthly_amount for all active users after fixing pricing inconsistencies. Respond with just the numeric answer.",
+    "expected_output_format": {"answer": "numeric string (e.g. \"249.97\")"}
+}
