@@ -1,7 +1,12 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
 """
 Baseline inference script for the Data Cleaning OpenEnv environment.
 
-This script runs a standard LLM agent against all 3 tasks and produces
+This script runs a standard LLM agent against all 4 tasks and produces
 scores. It uses the OpenAI Client with the required environment variables.
 
 IMPORTANT: Start the environment server before running this script:
@@ -45,7 +50,7 @@ ENV_NAME = "data-cleaning-env"
 # Default to 7860 (HF Spaces port) - use 8000 for local dev with uvicorn
 ENV_URL = os.environ.get("ENV_URL", "http://localhost:7860")
 
-TASKS = ["task_1_identify", "task_2_classify", "task_3_fix"]
+TASKS = ["task_1_identify", "task_2_classify", "task_3_fix", "task_4_insight"]
 
 
 # ─── Logging ──────────────────────────────────────────────────────────
@@ -116,6 +121,13 @@ def build_system_prompt(task_name: str) -> str:
             '"current_value": "bob.smith@yahoo", "corrected_value": "bob.smith@yahoo.com"}, ...]}\n'
             "Check every cell, identify all issues, and provide corrected values."
         )
+    elif task_name == "task_4_insight":
+        return (
+            "You are a data analyst AI agent. You must calculate the total monthly_amount "
+            "for all active users AFTER correcting any pricing inconsistencies.\n"
+            "Use the available tools (check_schema, run_statistics, search_reference) to gather information.\n"
+            "Respond with ONLY the numeric answer as a string, e.g. \"249.97\" — no JSON, no explanations."
+        )
     return base
 
 
@@ -156,6 +168,9 @@ def parse_llm_response(response: str, task_name: str) -> tuple:
         return ("classify_errors", json.dumps(data))
     elif task_name == "task_3_fix" and "fixes" in data:
         return ("fix_errors", json.dumps(data))
+    elif task_name == "task_4_insight":
+        # For insight task, the LLM should return a numeric answer
+        return ("answer_insight", text)
     else:
         return ("submit", "")
 
