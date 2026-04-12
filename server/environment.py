@@ -1,485 +1,478 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
-
 """
-Data Cleaning Environment Implementation.
+Core environment logic for the Data Cleaning environment.
 
-Implements the OpenEnv Environment interface for data quality assessment tasks.
-Each episode presents a dirty dataset, the agent uses tools and actions to
-identify, classify, fix errors, or compute insights, and receives a score.
+Implements the OpenEnv Environment interface with reset(), step(), and state.
+Manages the data cleaning tasks, validates agent actions, and calculates rewards.
 """
 
 import json
-import statistics
+import uuid
 from typing import Any, Dict, List, Optional
-from uuid import uuid4
 
-from openenv.core.env_server.interfaces import Environment
-from openenv.core.env_server.types import State
-
-try:
-    from models import DataCleaningAction, DataCleaningObservation, DataCleaningState
-except ImportError:
-    from ..models import DataCleaningAction, DataCleaningObservation, DataCleaningState
-
-try:
-    from data import (
-        COLUMNS,
-        format_dataset_as_table,
-        get_dirty_dataset,
-        get_error_row_ids,
-        get_ground_truth_errors,
-        get_validation_rules,
-        PLAN_PRICING,
-    )
-except ImportError:
-    from ..data import (
-        COLUMNS,
-        format_dataset_as_table,
-        get_dirty_dataset,
-        get_error_row_ids,
-        get_ground_truth_errors,
-        get_validation_rules,
-        PLAN_PRICING,
-    )
+from data import (
+    COLUMNS,
+    format_dataset_as_table,
+    get_clean_dataset,
+    get_dataset_summary,
+    get_dirty_dataset,
+    get_error_row_ids,
+    get_ground_truth_errors,
+)
+from models import DataCleaningAction, DataCleaningObservation, DataCleaningState
 
 
 SCORE_EPSILON = 0.001
-SCORE_MAX = 0.999
+
 
 # Task definitions
 TASKS = {
     "task_1_identify": {
         "name": "task_1_identify",
         "description": (
-            "TASK 1 -- Error Identification\n"
-            "Identify ALL rows containing errors. Use tools to verify your findings if needed."
+            "TASK 1 — Error Identification (Easy)\n"
+            "Examine the dataset below and identify ALL rows that contain data quality errors.\n"
+            "Send your answer using the 'identify_errors' action with a JSON payload:\n"
+            '  {"row_ids": [2, 5, 8]}  (list the 1-indexed row IDs with errors)\n'
+            "When you are confident in your answer, use the 'submit' action to finalize.\n"
+            "You can refine your answer before submitting."
         ),
-        "available_actions": [
-            "identify_errors",
-            "check_schema",
-            "search_reference",
-            "run_statistics",
-            "submit",
-        ],
-        "max_steps": 15,
+        "available_actions": ["identify_errors", "submit"],
+        "max_steps": 5,
         "difficulty": "easy",
     },
     "task_2_classify": {
         "name": "task_2_classify",
         "description": (
-            "TASK 2 -- Error Classification\n"
-            "Identify and classify ALL errors into: missing_value, invalid_format, outlier, "
-            "duplicate, type_error, inconsistency."
+            "TASK 2 — Error Classification (Medium)\n"
+            "Examine the dataset and identify ALL data quality errors.\n"
+            "For each error, specify the row, column, and error type.\n"
+            "Valid error types: missing_value, invalid_format, outlier, duplicate, type_error, inconsistency\n"
+            "Send your answer using the 'classify_errors' action with a JSON payload:\n"
+            '  {"errors": [{"row_id": 2, "column": "email", "error_type": "invalid_format"}, ...]}\n'
+            "When you are confident, use 'submit' to finalize."
         ),
-        "available_actions": [
-            "classify_errors",
-            "check_schema",
-            "search_reference",
-            "run_statistics",
-            "submit",
-        ],
-        "max_steps": 15,
+        "available_actions": ["classify_errors", "submit"],
+        "max_steps": 5,
         "difficulty": "medium",
     },
     "task_3_fix": {
         "name": "task_3_fix",
         "description": (
-            "TASK 3 -- Error Correction\n"
-            "Identify, classify, and provide the correct value for ALL errors."
+            "TASK 3 — Error Detection and Correction (Hard)\n"
+            "Examine the dataset and identify ALL data quality errors.\n"
+            "For each error, specify the row, column, error type, the current wrong value, and the corrected value.\n"
+            "Valid error types: missing_value, invalid_format, outlier, duplicate, type_error, inconsistency\n"
+            "Send your answer using the 'fix_errors' action with a JSON payload:\n"
+            '  {"fixes": [{"row_id": 2, "column": "email", "error_type": "invalid_format", '
+            '"current_value": "bob.smith@yahoo", "corrected_value": "bob.smith@yahoo.com"}, ...]}\n'
+            "When you are confident, use 'submit' to finalize."
         ),
-        "available_actions": [
-            "fix_errors",
-            "check_schema",
-            "search_reference",
-            "run_statistics",
-            "submit",
-        ],
-        "max_steps": 20,
+        "available_actions": ["fix_errors", "submit"],
+        "max_steps": 5,
         "difficulty": "hard",
-    },
-    "task_4_insight": {
-        "name": "task_4_insight",
-        "description": (
-            "TASK 4 -- Quality Insights (Expert)\n"
-            "Calculate the total 'monthly_amount' only for 'active' users AFTER removing "
-            "all pricing inconsistencies. Use tools to run statistics or check the schema. "
-            "Provide your answer as a numeric string."
-        ),
-        "available_actions": [
-            "answer_insight",
-            "check_schema",
-            "search_reference",
-            "run_statistics",
-            "submit",
-        ],
-        "max_steps": 15,
-        "difficulty": "expert",
     },
 }
 
 
-class DataCleaningEnvironment(Environment):
+class DataCleaningEnvironment:
     """
-    Data Cleaning environment for data quality assessment tasks.
+    OpenEnv Environment for data quality assessment.
 
-    Each episode presents a dirty dataset with injected errors. The agent
-    uses tools and task-specific actions to identify, classify, fix errors,
-    or compute insights, and receives a score based on accuracy.
-
-    Design:
-    - Multi-step episodes: reset() provides dataset, step() validates actions
-    - Tool-use: check_schema, run_statistics, search_reference
-    - 4 tasks with progressive difficulty: identify -> classify -> fix -> insight
-    - Deterministic synthetic data for reproducible benchmarking
-
-    Example:
-        >>> env = DataCleaningEnvironment()
-        >>> obs = env.reset(task_name='task_1_identify')
-        >>> print(obs.task_description)
-        >>> obs = env.step(DataCleaningAction(action_type='check_schema', value=''))
-        >>> print(obs.tool_output)
-        >>> obs = env.step(DataCleaningAction(
-        ...     action_type='identify_errors',
-        ...     value='{"row_ids": [2, 5, 8]}'
-        ... ))
-        >>> print(obs.reward)
-        >>> env.close()
+    The agent is presented with a 'dirty' dataset containing planted errors
+    and must identify, classify, or fix them depending on the task.
     """
 
-    SUPPORTS_CONCURRENT_SESSIONS: bool = True
+    def __init__(self, task_name: str = "task_1_identify"):
+        """
+        Initialize the environment.
 
-    def __init__(self):
-        """Initialize the data cleaning environment."""
-        self._state = State(episode_id=str(uuid4()), step_count=0)
+        Args:
+            task_name: Which task to run. One of: task_1_identify, task_2_classify, task_3_fix.
+        """
+        if task_name not in TASKS:
+            raise ValueError(f"Unknown task: {task_name}. Must be one of: {list(TASKS.keys())}")
 
-        # Dataset management
-        self._task_name: str = "task_1_identify"
-        self._task_config: Dict[str, Any] = TASKS["task_1_identify"]
+        self._task_name = task_name
+        self._task_config = TASKS[task_name]
         self._dirty_dataset: List[Dict[str, Any]] = []
         self._ground_truth: List[Dict[str, Any]] = []
         self._error_row_ids: List[int] = []
-
-        # Episode state
+        self._episode_id: str = ""
+        self._step_count: int = 0
         self._done: bool = False
         self._cumulative_reward: float = 0.0
         self._last_reward: float = 0.0
         self._last_submission: Optional[Dict[str, Any]] = None
         self._best_score: float = 0.0
         self._feedback: str = ""
-        self._tool_output: Optional[Any] = None
 
-    def reset(
-        self,
-        task_name: Optional[str] = None,
-        episode_id: Optional[str] = None,
-        **kwargs,
-    ) -> DataCleaningObservation:
+    def reset(self, **kwargs) -> DataCleaningObservation:
         """
-        Reset the environment and get the initial observation.
-
-        Args:
-            task_name: Name of the task to run (e.g., 'task_1_identify').
-                      If None, uses previously set task or default.
-            episode_id: Optional episode ID for tracking.
+        Reset the environment to start a new episode.
 
         Returns:
-            DataCleaningObservation with dataset and task description.
-
-        Raises:
-            ValueError: If task_name is not recognized.
+            Initial observation with the dirty dataset and task instructions.
         """
-        if task_name is not None:
-            if task_name not in TASKS:
-                raise ValueError(
-                    f"Unknown task: {task_name}. "
-                    f"Available tasks: {list(TASKS.keys())}"
-                )
-            self._task_name = task_name
-            self._task_config = TASKS[task_name]
-
-        # Load dataset
         self._dirty_dataset = get_dirty_dataset()
         self._ground_truth = get_ground_truth_errors()
         self._error_row_ids = get_error_row_ids()
-
-        # Reset episode state
+        self._episode_id = kwargs.get("episode_id", str(uuid.uuid4())[:8])
+        self._step_count = 0
         self._done = False
         self._cumulative_reward = 0.0
         self._last_reward = 0.0
         self._last_submission = None
         self._best_score = 0.0
         self._feedback = ""
-        self._tool_output = None
 
-        # Update state
-        self._state = State(
-            episode_id=episode_id or str(uuid4()),
-            step_count=0,
-        )
+        dataset_text = format_dataset_as_table(self._dirty_dataset)
+        summary = get_dataset_summary()
 
-        return self._make_observation(
-            feedback=f"New episode for {self._task_name}. "
-            f"Dataset loaded with {len(self._dirty_dataset)} rows.",
-            reward=SCORE_EPSILON,
+        return DataCleaningObservation(
+            dataset_text=f"{summary}\n\n{dataset_text}",
+            task_name=self._task_config["name"],
+            task_description=self._task_config["description"],
+            available_actions=self._task_config["available_actions"],
+            feedback="Episode started. Examine the dataset and find the errors.",
+            step_number=0,
+            max_steps=self._task_config["max_steps"],
+            num_rows=len(self._dirty_dataset),
+            num_columns=len(COLUMNS),
+            column_names=list(COLUMNS),
+            done=False,
+            reward=0.0,
+            metadata={"episode_id": self._episode_id, "task_difficulty": self._task_config["difficulty"]},
         )
 
     def step(self, action: DataCleaningAction) -> DataCleaningObservation:
         """
-        Execute an action in the environment.
+        Execute an agent action and return the resulting observation.
 
         Args:
-            action: DataCleaningAction containing action_type and value.
+            action: The action to execute.
 
         Returns:
-            DataCleaningObservation with feedback, reward, and done status.
+            Observation with feedback and reward.
         """
         if self._done:
-            return self._make_observation("Episode finished.", SCORE_EPSILON)
+            return self._make_observation(
+                feedback="Episode is already done. Call reset() to start a new episode.",
+                reward=0.0,
+            )
 
-        self._state.step_count += 1
-        self._tool_output = None
+        self._step_count += 1
 
         # Check for step limit
-        if self._state.step_count >= self._task_config["max_steps"]:
+        if self._step_count >= self._task_config["max_steps"]:
             self._done = True
-            return self._handle_submit()
+            # Auto-submit the best submission if any
+            if self._last_submission is not None:
+                reward = _normalize_task_score(self._best_score)
+                feedback = f"Step limit reached. Auto-submitting your best answer (score: {self._best_score:.2f})."
+            else:
+                reward = SCORE_EPSILON
+                feedback = "Step limit reached with no submission. Minimal score assigned."
+            self._last_reward = reward
+            return self._make_observation(feedback=feedback, reward=reward)
 
-        # Handle actions
-        ac = action.action_type
-        val = action.value
+        # Validate action type
+        valid_actions = self._task_config["available_actions"]
+        if action.action_type not in valid_actions:
+            self._last_reward = -0.05
+            self._cumulative_reward += self._last_reward
+            feedback = (
+                f"Invalid action type '{action.action_type}'. "
+                f"Valid actions for this task: {valid_actions}"
+            )
+            return self._make_observation(feedback=feedback, reward=self._last_reward)
 
-        if ac == "submit":
+        # Process action
+        if action.action_type == "submit":
             return self._handle_submit()
-        elif ac == "check_schema":
-            return self._handle_check_schema()
-        elif ac == "run_statistics":
-            return self._handle_run_stats()
-        elif ac == "search_reference":
-            return self._handle_search(val)
-        elif ac == "identify_errors":
-            return self._handle_identify(val)
-        elif ac == "classify_errors":
-            return self._handle_classify(val)
-        elif ac == "fix_errors":
-            return self._handle_fix(val)
-        elif ac == "answer_insight":
-            return self._handle_insight(val)
+        elif action.action_type == "identify_errors":
+            return self._handle_identify(action.value)
+        elif action.action_type == "classify_errors":
+            return self._handle_classify(action.value)
+        elif action.action_type == "fix_errors":
+            return self._handle_fix(action.value)
         else:
-            self._last_reward = SCORE_EPSILON
-            return self._make_observation(f"Unknown action '{ac}'", SCORE_EPSILON)
+            self._last_reward = -0.05
+            self._cumulative_reward += self._last_reward
+            return self._make_observation(
+                feedback=f"Unrecognized action: {action.action_type}",
+                reward=self._last_reward,
+            )
 
     @property
-    def state(self) -> State:
-        """
-        Get the current environment state.
-
-        Returns:
-            Current State with episode_id and step_count.
-        """
-        return self._state
-
-    # -- Tool Handlers --------------------------------------------------------
-
-    def _handle_check_schema(self) -> DataCleaningObservation:
-        rules = get_validation_rules()
-        self._tool_output = rules
-        self._last_reward = 0.01
-        return self._make_observation("Retrieved schema and validation rules.", 0.01)
-
-    def _handle_run_stats(self) -> DataCleaningObservation:
-        amounts = []
-        ages = []
-        for r in self._dirty_dataset:
-            try:
-                amounts.append(float(r["monthly_amount"]))
-            except (ValueError, TypeError):
-                pass
-            try:
-                ages.append(float(r["age"]))
-            except (ValueError, TypeError):
-                pass
-
-        stats = {
-            "row_count": len(self._dirty_dataset),
-            "monthly_amount": {
-                "mean": statistics.mean(amounts) if amounts else 0,
-                "sum": sum(amounts) if amounts else 0,
-                "min": min(amounts) if amounts else 0,
-                "max": max(amounts) if amounts else 0,
-            },
-            "age": {
-                "mean": statistics.mean(ages) if ages else 0,
-                "median": statistics.median(ages) if ages else 0,
-            },
-        }
-        self._tool_output = stats
-        self._last_reward = 0.01
-        return self._make_observation("Calculated dataset statistics.", 0.01)
-
-    def _handle_search(self, query: str) -> DataCleaningObservation:
-        rules = get_validation_rules()
-        query = query.lower().strip()
-        results = []
-        if "city" in query or "cities" in query:
-            results = rules["cities"]
-        elif "plan" in query or "pricing" in query:
-            results = [f"{k}: ${v}" for k, v in rules["pricing"].items()]
-        else:
-            results = [
-                "No specific reference found for query. Try 'cities' or 'pricing'."
-            ]
-
-        self._tool_output = results
-        self._last_reward = 0.01
-        return self._make_observation(f"Search results for '{query}'.", 0.01)
-
-    # -- Task Handlers --------------------------------------------------------
-
-    def _handle_identify(self, value: str) -> DataCleaningObservation:
-        try:
-            data = json.loads(value)
-            pred_ids = set(data.get("row_ids", []))
-            true_ids = set(self._error_row_ids)
-            f1 = self._calc_f1(pred_ids, true_ids)
-            reward = _normalize_task_score(f1)
-            self._update_best(reward, data)
-            return self._make_observation(
-                f"Identification F1: {f1:.2f}. "
-                f"Correct: {len(pred_ids & true_ids)}/{len(true_ids)}",
-                reward,
-            )
-        except Exception as e:
-            return self._make_observation(f"JSON Error: {e}", SCORE_EPSILON)
-
-    def _handle_classify(self, value: str) -> DataCleaningObservation:
-        try:
-            data = json.loads(value)
-            preds = data.get("errors", [])
-            matches = 0
-            for p in preds:
-                for gt in self._ground_truth:
-                    if p["row_id"] == gt["row_id"] and p["column"] == gt["column"]:
-                        if p["error_type"] == gt["error_type"]:
-                            matches += 1
-            score = matches / max(len(self._ground_truth), 1)
-            reward = _normalize_task_score(score)
-            self._update_best(reward, data)
-            return self._make_observation(
-                f"Classification Score: {score:.2f}", reward
-            )
-        except Exception as e:
-            return self._make_observation(f"JSON Error: {e}", SCORE_EPSILON)
-
-    def _handle_fix(self, value: str) -> DataCleaningObservation:
-        try:
-            data = json.loads(value)
-            preds = data.get("fixes", [])
-            score = 0
-            for p in preds:
-                for gt in self._ground_truth:
-                    if p["row_id"] == gt["row_id"] and p["column"] == gt["column"]:
-                        if (
-                            str(p["corrected_value"]).lower()
-                            == str(gt["corrected_value"]).lower()
-                        ):
-                            score += 1
-                        elif _is_close_numeric(
-                            p["corrected_value"], gt["corrected_value"]
-                        ):
-                            score += 0.5
-            final = score / max(len(self._ground_truth), 1)
-            reward = _normalize_task_score(final)
-            self._update_best(reward, data)
-            return self._make_observation(f"Fix Score: {final:.2f}", reward)
-        except Exception as e:
-            return self._make_observation(f"JSON Error: {e}", SCORE_EPSILON)
-
-    def _handle_insight(self, value: str) -> DataCleaningObservation:
-        # Calculate ground truth: total monthly_amount for active users
-        # after correcting ALL inconsistencies
-        total = 0.0
-        for r in self._dirty_dataset:
-            corrected_status = r["status"]
-            corrected_amount = r["monthly_amount"]
-
-            for gt in self._ground_truth:
-                if gt["row_id"] == r["id"]:
-                    if gt["column"] == "status":
-                        corrected_status = gt["corrected_value"]
-                    elif gt["column"] == "monthly_amount":
-                        corrected_amount = gt["corrected_value"]
-
-            if str(corrected_status).lower().strip() == "active":
-                total += float(corrected_amount)
-
-        try:
-            pred = float(value.replace("$", "").strip())
-            diff = abs(pred - total)
-            if diff < 0.01:
-                score = SCORE_MAX
-            elif diff < 10:
-                score = 0.5
-            else:
-                score = SCORE_EPSILON
-            reward = _normalize_task_score(score)
-            self._update_best(reward, {"answer": value})
-            return self._make_observation(
-                f"Insight Accuracy Reward: {reward:.2f}", reward
-            )
-        except (ValueError, TypeError):
-            return self._make_observation("Please provide a numeric value.", SCORE_EPSILON)
-
-    def _handle_submit(self) -> DataCleaningObservation:
-        self._done = True
-        # Ensure final score is strictly in (0, 1) per validator requirements
-        final_reward = _normalize_task_score(self._best_score)
-        return self._make_observation(
-            f"Episode complete. Final best score: {final_reward:.3f}",
-            final_reward,
+    def state(self) -> DataCleaningState:
+        """Return current episode state metadata."""
+        return DataCleaningState(
+            episode_id=self._episode_id,
+            step_count=self._step_count,
+            task_name=self._task_name,
+            total_errors=len(self._ground_truth),
+            errors_found=0,  # Updated during grading
+            cumulative_reward=self._cumulative_reward,
         )
 
-    # -- Helpers --------------------------------------------------------------
+    # ─── Action Handlers ──────────────────────────────────────────────
 
-    def _calc_f1(self, pred, true):
-        if not pred:
-            return 0.0
-        tp = len(pred & true)
-        prec = tp / len(pred)
-        rec = tp / len(true)
-        return 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
+    def _handle_identify(self, value: str) -> DataCleaningObservation:
+        """Handle 'identify_errors' action for Task 1."""
+        try:
+            data = json.loads(value)
+            row_ids = data.get("row_ids", [])
+            if not isinstance(row_ids, list):
+                raise ValueError("'row_ids' must be a list of integers")
+            row_ids = [int(r) for r in row_ids]
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            self._last_reward = -0.05
+            self._cumulative_reward += self._last_reward
+            return self._make_observation(
+                feedback=f"Invalid JSON format. Error: {e}. Expected: {{\"row_ids\": [2, 5, 8]}}",
+                reward=self._last_reward,
+            )
 
-    def _update_best(self, score, data):
-        if score > self._best_score:
-            self._best_score = score
-            self._last_submission = data
+        # Grade the identification
+        true_ids = set(self._error_row_ids)
+        predicted_ids = set(row_ids)
 
-    def _make_observation(
-        self, feedback: str, reward: float
-    ) -> DataCleaningObservation:
+        true_positives = len(true_ids & predicted_ids)
+        false_positives = len(predicted_ids - true_ids)
+        false_negatives = len(true_ids - predicted_ids)
+
+        precision = true_positives / max(len(predicted_ids), 1)
+        recall = true_positives / max(len(true_ids), 1)
+        f1 = 2 * precision * recall / max(precision + recall, 1e-9)
+
+        # Partial reward based on F1 score
+        reward = _normalize_task_score(f1)
+        self._last_reward = reward
         self._cumulative_reward += reward
+
+        # Track best submission
+        if reward > self._best_score:
+            self._best_score = reward
+            self._last_submission = {"row_ids": row_ids}
+
+        # Build feedback
+        feedback_parts = [
+            f"Identification score: {reward:.2f} (F1)",
+            f"  Correct identifications: {true_positives}/{len(true_ids)}",
+            f"  False alarms: {false_positives}",
+            f"  Missed errors: {false_negatives}",
+        ]
+
+        if false_negatives > 0:
+            feedback_parts.append("  Hint: There are more errors in the dataset. Look carefully at data types, formats, and consistency.")
+
+        if false_positives > 0:
+            feedback_parts.append("  Hint: Some rows you flagged are actually clean. Double-check the validation rules.")
+
+        return self._make_observation(
+            feedback="\n".join(feedback_parts),
+            reward=reward,
+        )
+
+    def _handle_classify(self, value: str) -> DataCleaningObservation:
+        """Handle 'classify_errors' action for Task 2."""
+        try:
+            data = json.loads(value)
+            errors = data.get("errors", [])
+            if not isinstance(errors, list):
+                raise ValueError("'errors' must be a list")
+            # Validate each error entry has required fields
+            for e in errors:
+                if not all(k in e for k in ("row_id", "column", "error_type")):
+                    raise ValueError("Each error must have 'row_id', 'column', and 'error_type'")
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            self._last_reward = -0.05
+            self._cumulative_reward += self._last_reward
+            return self._make_observation(
+                feedback=f"Invalid JSON format. Error: {e}. Expected: {{\"errors\": [{{\"row_id\": 2, \"column\": \"email\", \"error_type\": \"invalid_format\"}}]}}",
+                reward=self._last_reward,
+            )
+
+        # Grade classification
+        total_gt = len(self._ground_truth)
+        location_matches = 0
+        full_matches = 0
+
+        for pred in errors:
+            pred_row = int(pred["row_id"])
+            pred_col = pred["column"].strip().lower()
+            pred_type = pred["error_type"].strip().lower()
+
+            for gt in self._ground_truth:
+                if gt["row_id"] == pred_row and gt["column"].lower() == pred_col:
+                    location_matches += 1
+                    if gt["error_type"].lower() == pred_type:
+                        full_matches += 1
+                    break
+
+        # Score: 50% for finding the right location, 50% for correct type
+        location_score = location_matches / max(total_gt, 1)
+        type_score = full_matches / max(total_gt, 1)
+        reward = 0.5 * location_score + 0.5 * type_score
+
+        # Penalize false positives lightly
+        false_positives = max(0, len(errors) - location_matches)
+        penalty = min(0.1, false_positives * 0.02)
+        reward = _normalize_task_score(reward - penalty)
+
+        self._last_reward = reward
+        self._cumulative_reward += reward
+
+        if reward > self._best_score:
+            self._best_score = reward
+            self._last_submission = {"errors": errors}
+
+        feedback_parts = [
+            f"Classification score: {reward:.2f}",
+            f"  Errors found at correct location: {location_matches}/{total_gt}",
+            f"  Errors with correct type: {full_matches}/{total_gt}",
+            f"  False alarms: {false_positives}",
+        ]
+
+        missed = total_gt - location_matches
+        if missed > 0:
+            feedback_parts.append(f"  You missed {missed} errors. Check all columns carefully.")
+        if location_matches > full_matches:
+            feedback_parts.append(f"  {location_matches - full_matches} errors found but misclassified. Review error types.")
+
+        return self._make_observation(
+            feedback="\n".join(feedback_parts),
+            reward=reward,
+        )
+
+    def _handle_fix(self, value: str) -> DataCleaningObservation:
+        """Handle 'fix_errors' action for Task 3."""
+        try:
+            data = json.loads(value)
+            fixes = data.get("fixes", [])
+            if not isinstance(fixes, list):
+                raise ValueError("'fixes' must be a list")
+            for f in fixes:
+                required = ("row_id", "column", "error_type", "current_value", "corrected_value")
+                if not all(k in f for k in required):
+                    raise ValueError(f"Each fix must have: {required}")
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            self._last_reward = -0.05
+            self._cumulative_reward += self._last_reward
+            return self._make_observation(
+                feedback=f"Invalid JSON format. Error: {e}.",
+                reward=self._last_reward,
+            )
+
+        # Grade fixes
+        total_gt = len(self._ground_truth)
+        location_matches = 0
+        type_matches = 0
+        fix_matches = 0
+
+        for pred in fixes:
+            pred_row = int(pred["row_id"])
+            pred_col = pred["column"].strip().lower()
+            pred_type = pred["error_type"].strip().lower()
+            pred_fix = str(pred["corrected_value"]).strip().lower()
+
+            for gt in self._ground_truth:
+                if gt["row_id"] == pred_row and gt["column"].lower() == pred_col:
+                    location_matches += 1
+                    if gt["error_type"].lower() == pred_type:
+                        type_matches += 1
+                    # Check fix value (fuzzy match for strings, exact for numbers)
+                    gt_fix = str(gt["corrected_value"]).strip().lower()
+                    if pred_fix == gt_fix:
+                        fix_matches += 1
+                    elif _is_close_numeric(pred["corrected_value"], gt["corrected_value"]):
+                        fix_matches += 0.5  # Partial credit for close numeric values
+                    break
+
+        # Score: 30% location, 30% type, 40% fix quality
+        location_score = location_matches / max(total_gt, 1)
+        type_score = type_matches / max(total_gt, 1)
+        fix_score = fix_matches / max(total_gt, 1)
+        reward = 0.3 * location_score + 0.3 * type_score + 0.4 * fix_score
+
+        # Penalize false positives
+        false_positives = max(0, len(fixes) - location_matches)
+        penalty = min(0.1, false_positives * 0.02)
+        reward = _normalize_task_score(reward - penalty)
+
+        self._last_reward = reward
+        self._cumulative_reward += reward
+
+        if reward > self._best_score:
+            self._best_score = reward
+            self._last_submission = {"fixes": fixes}
+
+        feedback_parts = [
+            f"Fix score: {reward:.2f}",
+            f"  Errors located: {location_matches}/{total_gt}",
+            f"  Correct error types: {type_matches}/{total_gt}",
+            f"  Correct fixes: {fix_matches}/{total_gt}",
+            f"  False alarms: {false_positives}",
+        ]
+
+        missed = total_gt - location_matches
+        if missed > 0:
+            feedback_parts.append(f"  You missed {missed} errors.")
+        if type_matches < location_matches:
+            feedback_parts.append(f"  Some error types are wrong. Review the error type categories.")
+        if fix_matches < type_matches:
+            feedback_parts.append(f"  Some corrections are not quite right. Check values carefully.")
+
+        return self._make_observation(
+            feedback="\n".join(feedback_parts),
+            reward=reward,
+        )
+
+    def _handle_submit(self) -> DataCleaningObservation:
+        """Handle 'submit' action — finalize the episode."""
+        self._done = True
+
+        if self._last_submission is not None:
+            final_reward = _normalize_task_score(self._best_score)
+            feedback = f"Submission accepted! Final score: {final_reward:.3f}"
+        else:
+            final_reward = SCORE_EPSILON
+            feedback = "Submitted with no answer. Minimal score assigned; provide an answer before submitting."
+
+        self._last_reward = final_reward
+        return self._make_observation(feedback=feedback, reward=final_reward)
+
+    # ─── Helpers ──────────────────────────────────────────────────────
+
+    def _make_observation(self, feedback: str, reward: float) -> DataCleaningObservation:
+        """Build an observation object with current state."""
+        dataset_text = format_dataset_as_table(self._dirty_dataset)
+        summary = get_dataset_summary()
+
         return DataCleaningObservation(
-            dataset_text=format_dataset_as_table(self._dirty_dataset),
-            task_name=self._task_name,
+            dataset_text=f"{summary}\n\n{dataset_text}",
+            task_name=self._task_config["name"],
             task_description=self._task_config["description"],
             available_actions=self._task_config["available_actions"],
             feedback=feedback,
-            tool_output=self._tool_output,
-            step_number=self._state.step_count,
+            step_number=self._step_count,
             max_steps=self._task_config["max_steps"],
             num_rows=len(self._dirty_dataset),
             num_columns=len(COLUMNS),
-            column_names=COLUMNS,
+            column_names=list(COLUMNS),
             done=self._done,
             reward=reward,
-            metadata={"episode_id": self._state.episode_id},
+            metadata={
+                "episode_id": self._episode_id,
+                "task_difficulty": self._task_config["difficulty"],
+                "best_score": self._best_score,
+                "cumulative_reward": self._cumulative_reward,
+            },
         )
 
 
-def _is_close_numeric(a, b):
+def _is_close_numeric(a: Any, b: Any) -> bool:
+    """Check if two values are numerically close."""
     try:
         return abs(float(a) - float(b)) < 0.01
     except (ValueError, TypeError):
@@ -487,10 +480,6 @@ def _is_close_numeric(a, b):
 
 
 def _normalize_task_score(score: float) -> float:
-    """Clamp and round task scores so they are always strictly between 0 and 1.
-
-    The hackathon validator requires scores to be strictly in (0, 1) --
-    never exactly 0.0 and never exactly 1.0.
-    """
-    clamped = min(max(float(score), SCORE_EPSILON), SCORE_MAX)
-    return round(clamped, 3)
+    """Clamp and round task scores so they are always strictly between 0 and 1."""
+    bounded = min(max(float(score), SCORE_EPSILON), 1.0 - SCORE_EPSILON)
+    return round(bounded, 3)
