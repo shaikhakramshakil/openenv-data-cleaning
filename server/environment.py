@@ -48,6 +48,7 @@ except ImportError:
 
 
 SCORE_EPSILON = 0.001
+SCORE_MAX = 0.999
 
 # Task definitions
 TASKS = {
@@ -223,7 +224,7 @@ class DataCleaningEnvironment(Environment):
         return self._make_observation(
             feedback=f"New episode for {self._task_name}. "
             f"Dataset loaded with {len(self._dirty_dataset)} rows.",
-            reward=0.0,
+            reward=SCORE_EPSILON,
         )
 
     def step(self, action: DataCleaningAction) -> DataCleaningObservation:
@@ -237,7 +238,7 @@ class DataCleaningEnvironment(Environment):
             DataCleaningObservation with feedback, reward, and done status.
         """
         if self._done:
-            return self._make_observation("Episode finished.", 0.0)
+            return self._make_observation("Episode finished.", SCORE_EPSILON)
 
         self._state.step_count += 1
         self._tool_output = None
@@ -268,8 +269,8 @@ class DataCleaningEnvironment(Environment):
         elif ac == "answer_insight":
             return self._handle_insight(val)
         else:
-            self._last_reward = -0.01
-            return self._make_observation(f"Unknown action '{ac}'", -0.01)
+            self._last_reward = SCORE_EPSILON
+            return self._make_observation(f"Unknown action '{ac}'", SCORE_EPSILON)
 
     @property
     def state(self) -> State:
@@ -352,7 +353,7 @@ class DataCleaningEnvironment(Environment):
                 reward,
             )
         except Exception as e:
-            return self._make_observation(f"JSON Error: {e}", -0.05)
+            return self._make_observation(f"JSON Error: {e}", SCORE_EPSILON)
 
     def _handle_classify(self, value: str) -> DataCleaningObservation:
         try:
@@ -371,7 +372,7 @@ class DataCleaningEnvironment(Environment):
                 f"Classification Score: {score:.2f}", reward
             )
         except Exception as e:
-            return self._make_observation(f"JSON Error: {e}", -0.05)
+            return self._make_observation(f"JSON Error: {e}", SCORE_EPSILON)
 
     def _handle_fix(self, value: str) -> DataCleaningObservation:
         try:
@@ -395,7 +396,7 @@ class DataCleaningEnvironment(Environment):
             self._update_best(reward, data)
             return self._make_observation(f"Fix Score: {final:.2f}", reward)
         except Exception as e:
-            return self._make_observation(f"JSON Error: {e}", -0.05)
+            return self._make_observation(f"JSON Error: {e}", SCORE_EPSILON)
 
     def _handle_insight(self, value: str) -> DataCleaningObservation:
         # Calculate ground truth: total monthly_amount for active users
@@ -430,13 +431,15 @@ class DataCleaningEnvironment(Environment):
                 f"Insight Accuracy Reward: {reward:.2f}", reward
             )
         except (ValueError, TypeError):
-            return self._make_observation("Please provide a numeric value.", -0.05)
+            return self._make_observation("Please provide a numeric value.", SCORE_EPSILON)
 
     def _handle_submit(self) -> DataCleaningObservation:
         self._done = True
+        # Ensure final score is strictly in (0, 1) per validator requirements
+        final_reward = _normalize_task_score(self._best_score)
         return self._make_observation(
-            f"Episode complete. Final best score: {self._best_score:.3f}",
-            self._best_score,
+            f"Episode complete. Final best score: {final_reward:.3f}",
+            final_reward,
         )
 
     # -- Helpers --------------------------------------------------------------
@@ -484,5 +487,10 @@ def _is_close_numeric(a, b):
 
 
 def _normalize_task_score(score: float) -> float:
-    """Clamp and round task scores so they are always strictly between 0 and 1."""
-    return round(min(max(float(score), SCORE_EPSILON), 1.0), 3)
+    """Clamp and round task scores so they are always strictly between 0 and 1.
+
+    The hackathon validator requires scores to be strictly in (0, 1) --
+    never exactly 0.0 and never exactly 1.0.
+    """
+    clamped = min(max(float(score), SCORE_EPSILON), SCORE_MAX)
+    return round(clamped, 3)
