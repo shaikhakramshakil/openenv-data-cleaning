@@ -1,4 +1,4 @@
-openenv @ git+https://github.com/meta-pytorch/OpenEnv.git
+openenv-core @ git+https://github.com/meta-pytorch/OpenEnv.git
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 websockets>=12.0
