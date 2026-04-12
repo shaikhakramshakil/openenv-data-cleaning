@@ -178,7 +178,7 @@ class DataCleaningEnvironment:
         # Validate action type
         valid_actions = self._task_config["available_actions"]
         if action.action_type not in valid_actions:
-            self._last_reward = -0.05
+            self._last_reward = SCORE_EPSILON
             self._cumulative_reward += self._last_reward
             feedback = (
                 f"Invalid action type '{action.action_type}'. "
@@ -196,7 +196,7 @@ class DataCleaningEnvironment:
         elif action.action_type == "fix_errors":
             return self._handle_fix(action.value)
         else:
-            self._last_reward = -0.05
+            self._last_reward = SCORE_EPSILON
             self._cumulative_reward += self._last_reward
             return self._make_observation(
                 feedback=f"Unrecognized action: {action.action_type}",
@@ -226,7 +226,7 @@ class DataCleaningEnvironment:
                 raise ValueError("'row_ids' must be a list of integers")
             row_ids = [int(r) for r in row_ids]
         except (json.JSONDecodeError, ValueError, TypeError) as e:
-            self._last_reward = -0.05
+            self._last_reward = SCORE_EPSILON
             self._cumulative_reward += self._last_reward
             return self._make_observation(
                 feedback=f"Invalid JSON format. Error: {e}. Expected: {{\"row_ids\": [2, 5, 8]}}",
@@ -286,7 +286,7 @@ class DataCleaningEnvironment:
                 if not all(k in e for k in ("row_id", "column", "error_type")):
                     raise ValueError("Each error must have 'row_id', 'column', and 'error_type'")
         except (json.JSONDecodeError, ValueError, TypeError) as e:
-            self._last_reward = -0.05
+            self._last_reward = SCORE_EPSILON
             self._cumulative_reward += self._last_reward
             return self._make_observation(
                 feedback=f"Invalid JSON format. Error: {e}. Expected: {{\"errors\": [{{\"row_id\": 2, \"column\": \"email\", \"error_type\": \"invalid_format\"}}]}}",
@@ -357,7 +357,7 @@ class DataCleaningEnvironment:
                 if not all(k in f for k in required):
                     raise ValueError(f"Each fix must have: {required}")
         except (json.JSONDecodeError, ValueError, TypeError) as e:
-            self._last_reward = -0.05
+            self._last_reward = SCORE_EPSILON
             self._cumulative_reward += self._last_reward
             return self._make_observation(
                 feedback=f"Invalid JSON format. Error: {e}.",
