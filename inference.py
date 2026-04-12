@@ -267,8 +267,8 @@ async def run_task(task_name: str, llm_client: OpenAI) -> float:
 
                     if step_response.get("type") == "error":
                         error_msg = step_response["data"]["message"]
-                        log_step(step=step, action=action_type, reward=0.0, done=False, error=error_msg)
-                        rewards.append(0.0)
+                        log_step(step=step, action=action_type, reward=SCORE_EPSILON, done=False, error=error_msg)
+                        rewards.append(SCORE_EPSILON)
                         continue
 
                     step_data = step_response["data"]
@@ -301,7 +301,7 @@ async def run_task(task_name: str, llm_client: OpenAI) -> float:
 
     except Exception as e:
         error_msg = str(e)
-        log_step(step=step_count, action="error", reward=0.0, done=True, error=error_msg)
+        log_step(step=step_count, action="error", reward=SCORE_EPSILON, done=True, error=error_msg)
         traceback.print_exc(file=sys.stderr)
 
     log_end(success=success, steps=step_count, score=final_score, rewards=rewards)

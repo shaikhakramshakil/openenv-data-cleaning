@@ -140,7 +140,7 @@ class DataCleaningEnvironment:
             num_columns=len(COLUMNS),
             column_names=list(COLUMNS),
             done=False,
-            reward=0.0,
+            reward=SCORE_EPSILON,
             metadata={"episode_id": self._episode_id, "task_difficulty": self._task_config["difficulty"]},
         )
 
@@ -157,7 +157,7 @@ class DataCleaningEnvironment:
         if self._done:
             return self._make_observation(
                 feedback="Episode is already done. Call reset() to start a new episode.",
-                reward=0.0,
+                reward=SCORE_EPSILON,
             )
 
         self._step_count += 1
