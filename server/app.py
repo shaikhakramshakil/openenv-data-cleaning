@@ -1,77 +1,55 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
-
 """
-FastAPI application for the Data Cleaning Environment.
+FastAPI server for the Data Cleaning OpenEnv environment.
 
-This module creates an HTTP server that exposes the DataCleaningEnvironment
-over HTTP and WebSocket endpoints, compatible with EnvClient.
-
-Endpoints:
-    - POST /reset: Reset the environment
-    - POST /step: Execute an action
-    - GET /state: Get current environment state
-    - GET /schema: Get action/observation schemas
-    - WS /ws: WebSocket endpoint for persistent sessions
-
-Usage:
-    # Development (with auto-reload):
-    uvicorn server.app:app --reload --host 0.0.0.0 --port 7860
-
-    # Production:
-    uvicorn server.app:app --host 0.0.0.0 --port 7860 --workers 2
-
-    # Or run directly:
-    python -m server.app
+Exposes the environment via HTTP and WebSocket endpoints following
+the OpenEnv specification.
 """
 
-try:
-    from openenv.core.env_server.http_server import create_app
-except Exception as e:  # pragma: no cover
-    raise ImportError(
-        "openenv is required for the web interface. "
-        "Install dependencies with '\n    pip install openenv\n'"
-    ) from e
+import asyncio
+import json
+import os
+import uuid
+from contextlib import asynccontextmanager
+from typing import Any, Dict
 
-# Import from local models.py (PYTHONPATH includes /app in Docker)
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, JSONResponse
+
 try:
-    from models import DataCleaningAction, DataCleaningObservation
+    # Module execution: python -m server.app
+    from .environment import DataCleaningEnvironment, TASKS
 except ImportError:
-    from ..models import DataCleaningAction, DataCleaningObservation
+    # Script execution: python server/app.py
+    from server.environment import DataCleaningEnvironment, TASKS
 
-from .environment import DataCleaningEnvironment, TASKS
-
-# Import Web UI
-try:
-    from .web_ui import WEB_UI_HTML
-except ImportError:
-    try:
-        from server.web_ui import WEB_UI_HTML
-    except ImportError:
-        WEB_UI_HTML = "<html><body><h1>Data Cleaning Environment</h1></body></html>"
+# Read task name from environment variable (default: task_1_identify)
+DEFAULT_TASK = os.environ.get("OPENENV_TASK", "task_1_identify")
+MAX_CONCURRENT_ENVS = int(os.environ.get("MAX_CONCURRENT_ENVS", "100"))
 
 
-# Create the app with web interface using the standard OpenEnv factory
-app = create_app(
-    DataCleaningEnvironment,
-    DataCleaningAction,
-    DataCleaningObservation,
-    env_name="data-cleaning-env",
-    max_concurrent_envs=100,
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application startup/shutdown lifecycle."""
+    print(f"Data Cleaning Environment starting (default task: {DEFAULT_TASK})")
+    print(f"Max concurrent environments: {MAX_CONCURRENT_ENVS}")
+    yield
+    print("Data Cleaning Environment shutting down")
+
+
+app = FastAPI(
+    title="OpenEnv Data Cleaning Environment",
+    description="A real-world environment for training AI agents on data quality assessment",
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
 
-# -- Custom Routes (added on top of standard OpenEnv endpoints) ---------------
+# ─── HTTP Endpoints (stateless, for debugging) ───────────────────────
 
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-
-
-@app.get("/", include_in_schema=False)
+@app.get("/")
 async def root():
-    """Redirect root to the web UI."""
+    """Redirect root to the web UI so the HF Space doesn't show 'Not Found'."""
+    from fastapi.responses import RedirectResponse
     return RedirectResponse(url="/web")
 
 
@@ -83,29 +61,220 @@ async def health():
 
 @app.get("/info")
 async def info():
-    """Return environment metadata."""
+    """Return environment info."""
     return {
         "name": "data-cleaning-env",
-        "version": "1.1.0",
-        "description": "AI agent data quality assessment environment with tool-use",
+        "version": "1.0.0",
+        "description": "AI agent data quality assessment environment",
         "tasks": list(TASKS.keys()),
-        "tools": ["check_schema", "search_reference", "run_statistics"],
+        "default_task": DEFAULT_TASK,
     }
+
+
+@app.post("/reset")
+async def http_reset(data: Dict[str, Any] = None):
+    """Reset the environment (stateless — creates a new env each time)."""
+    if data is None:
+        data = {}
+    task_name = data.get("task_name", DEFAULT_TASK)
+    env = DataCleaningEnvironment(task_name=task_name)
+    obs = env.reset(**data)
+    return _serialize_observation(obs)
+
+
+@app.post("/step")
+async def http_step(data: Dict[str, Any]):
+    """Execute a single step (stateless — creates a fresh env per request)."""
+    task_name = data.get("task_name", DEFAULT_TASK)
+    action_type = data.get("action_type", "")
+    value = data.get("value", "")
+
+    env = DataCleaningEnvironment(task_name=task_name)
+    env.reset()
+
+    from models import DataCleaningAction
+    action = DataCleaningAction(action_type=action_type, value=value)
+    obs = env.step(action)
+    return _serialize_observation(obs)
+
+
+@app.get("/state")
+async def http_state():
+    """Get state (stateless — returns default state template). Use /ws for real sessions."""
+    from models import DataCleaningState
+    state = DataCleaningState(
+        episode_id="",
+        step_count=0,
+        task_name=DEFAULT_TASK,
+        total_errors=10,
+        errors_found=0,
+        cumulative_reward=0.0,
+    )
+    return state.model_dump()
+
+
+# ─── WebSocket Endpoint (stateful, persistent session) ───────────────
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """
+    WebSocket endpoint for persistent environment sessions.
+    
+    Each connection gets its own isolated environment instance.
+    Protocol:
+        Client sends: {"type": "reset"|"step"|"state"|"close", "data": {...}}
+        Server responds: {"type": "result"|"state"|"error", "data": {...}}
+    """
+    await websocket.accept()
+
+    env = None
+
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            message = json.loads(raw)
+            msg_type = message.get("type", "")
+            msg_data = message.get("data", {})
+
+            if msg_type == "reset":
+                task_name = msg_data.get("task_name", DEFAULT_TASK)
+                env = DataCleaningEnvironment(task_name=task_name)
+                obs = env.reset(**msg_data)
+                response = {
+                    "type": "result",
+                    "data": _serialize_observation(obs),
+                }
+                await websocket.send_text(json.dumps(response))
+
+            elif msg_type == "step":
+                if env is None:
+                    await websocket.send_text(json.dumps({
+                        "type": "error",
+                        "data": {"message": "Environment not initialized. Call reset first.", "code": "NOT_INITIALIZED"},
+                    }))
+                    continue
+
+                action = _deserialize_action(msg_data)
+                obs = env.step(action)
+                response = {
+                    "type": "result",
+                    "data": _serialize_observation(obs),
+                }
+                await websocket.send_text(json.dumps(response))
+
+            elif msg_type == "state":
+                if env is None:
+                    await websocket.send_text(json.dumps({
+                        "type": "error",
+                        "data": {"message": "Environment not initialized. Call reset first.", "code": "NOT_INITIALIZED"},
+                    }))
+                    continue
+
+                state = env.state
+                response = {
+                    "type": "state",
+                    "data": {
+                        "episode_id": state.episode_id,
+                        "step_count": state.step_count,
+                        "task_name": state.task_name,
+                        "total_errors": state.total_errors,
+                        "errors_found": state.errors_found,
+                        "cumulative_reward": state.cumulative_reward,
+                    },
+                }
+                await websocket.send_text(json.dumps(response))
+
+            elif msg_type == "close":
+                break
+
+            else:
+                await websocket.send_text(json.dumps({
+                    "type": "error",
+                    "data": {"message": f"Unknown message type: {msg_type}", "code": "UNKNOWN_TYPE"},
+                }))
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        try:
+            await websocket.send_text(json.dumps({
+                "type": "error",
+                "data": {"message": str(e), "code": "INTERNAL_ERROR"},
+            }))
+        except Exception:
+            pass
+
+
+# ─── Web UI ───────────────────────────────────────────────────────────
 
 
 @app.get("/web", response_class=HTMLResponse)
 async def web_ui():
-    """Premium Web UI for interacting with the environment."""
-    return WEB_UI_HTML
+    """Simple web UI for interacting with the environment."""
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head><title>Data Cleaning Environment</title></head>
+    <body>
+        <h1>Data Cleaning Environment</h1>
+        <p>This is an OpenEnv environment for AI agent data quality assessment.</p>
+        <h2>Available Tasks</h2>
+        <ul>
+            <li><strong>task_1_identify</strong> (Easy): Find which rows have errors</li>
+            <li><strong>task_2_classify</strong> (Medium): Find and classify errors</li>
+            <li><strong>task_3_fix</strong> (Hard): Find, classify, and fix errors</li>
+        </ul>
+        <h2>API Endpoints</h2>
+        <ul>
+            <li>GET /health -- Health check</li>
+            <li>GET /info -- Environment info</li>
+            <li>POST /reset -- Reset environment</li>
+            <li>WS /ws -- WebSocket for stateful sessions</li>
+            <li>GET /docs -- OpenAPI documentation</li>
+        </ul>
+    </body>
+    </html>
+    """
+
+
+# ─── Serialization Helpers ────────────────────────────────────────────
+
+
+def _serialize_observation(obs) -> Dict[str, Any]:
+    """Convert observation dataclass to JSON-serializable dict."""
+    return {
+        "observation": {
+            "dataset_text": obs.dataset_text,
+            "task_name": obs.task_name,
+            "task_description": obs.task_description,
+            "available_actions": obs.available_actions,
+            "feedback": obs.feedback,
+            "step_number": obs.step_number,
+            "max_steps": obs.max_steps,
+            "num_rows": obs.num_rows,
+            "num_columns": obs.num_columns,
+            "column_names": obs.column_names,
+            "metadata": obs.metadata,
+        },
+        "reward": obs.reward,
+        "done": obs.done,
+    }
+
+
+def _deserialize_action(data: Dict[str, Any]):
+    """Convert JSON dict to DataCleaningAction."""
+    from models import DataCleaningAction
+    return DataCleaningAction(
+        action_type=data.get("action_type", ""),
+        value=data.get("value", ""),
+    )
 
 
 def main():
-    """Entry point for the server."""
     import uvicorn
-    import os
-    host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", 7860))
-    uvicorn.run(app, host=host, port=port)
+    uvicorn.run("server.app:app", host="0.0.0.0", port=port, reload=False)
 
 
 if __name__ == "__main__":

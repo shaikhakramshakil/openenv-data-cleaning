@@ -51,8 +51,15 @@ if HF_TOKEN is None:
 ENV_NAME = "data-cleaning-env"
 # Default to 7860 (HF Spaces port) - use 8000 for local dev with uvicorn
 ENV_URL = os.environ.get("ENV_URL", "http://localhost:7860")
+SCORE_EPSILON = 0.001
 
 TASKS = ["task_1_identify", "task_2_classify", "task_3_fix", "task_4_insight"]
+
+
+def normalize_task_score(score: float) -> float:
+    """Clamp and round scores so they are always strictly between 0 and 1."""
+    bounded = min(max(float(score), SCORE_EPSILON), 1.0 - SCORE_EPSILON)
+    return round(bounded, 3)
 
 
 # ─── Logging ──────────────────────────────────────────────────────────
@@ -192,7 +199,7 @@ async def run_task(task_name: str, llm_client: OpenAI) -> float:
     rewards = []
     step_count = 0
     success = False
-    final_score = 0.0
+    final_score = SCORE_EPSILON
 
     try:
         # Reset environment
@@ -274,7 +281,7 @@ async def run_task(task_name: str, llm_client: OpenAI) -> float:
                     log_step(step=step, action=action_type, reward=reward, done=done)
 
                     if done:
-                        final_score = reward
+                        final_score = normalize_task_score(reward)
                         success = True
                         break
 
@@ -286,7 +293,7 @@ async def run_task(task_name: str, llm_client: OpenAI) -> float:
                     }))
                     submit_response = json.loads(await ws.receive_str())
                     submit_data = submit_response.get("data", {})
-                    final_score = submit_data.get("reward", 0.0)
+                    final_score = normalize_task_score(submit_data.get("reward", SCORE_EPSILON))
                     step_count += 1
                     rewards.append(final_score)
                     log_step(step=step_count, action="submit", reward=final_score, done=True)
@@ -298,7 +305,7 @@ async def run_task(task_name: str, llm_client: OpenAI) -> float:
         traceback.print_exc(file=sys.stderr)
 
     log_end(success=success, steps=step_count, score=final_score, rewards=rewards)
-    return final_score
+    return normalize_task_score(final_score)
 
 
 # ─── Main ─────────────────────────────────────────────────────────────

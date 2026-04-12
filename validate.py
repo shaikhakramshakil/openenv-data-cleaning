@@ -73,12 +73,12 @@ def main():
         obs = env.step(DataCleaningAction(action_type="search_reference", value="pricing"))
         check("search_reference tool works", obs.tool_output is not None)
 
-        # Test reward range
+        # Test reward range (strictly between 0 and 1)
         obs = env.step(DataCleaningAction(
             action_type="identify_errors",
             value='{"row_ids": [1,2,3,4,5,6,7,8,9,10,11,12]}',
         ))
-        check("Reward is in [0,1]", 0 <= obs.reward <= 1, f"reward={obs.reward}")
+        check("Reward is in (0,1)", 0 < obs.reward < 1, f"reward={obs.reward}")
 
         # Test Task 4 insight
         env4 = DataCleaningEnvironment("task_4_insight")
@@ -134,15 +134,15 @@ def main():
     # 5. Check reward logic via WebSocket (Simulated)
     print("\n5. Reward Logic Verification:")
     try:
-        # Instead of hardcoding, we just verify the environment logic itself allows [0,1]
+        # Instead of hardcoding, we verify reward is always strictly between 0 and 1
         from server.environment import DataCleaningEnvironment
         from models import DataCleaningAction
         env = DataCleaningEnvironment("task_1_identify")
         env.reset()
         # Mock a tool call to see if it gives small reward
         tool_obs = env.step(DataCleaningAction(action_type="check_schema"))
-        valid_range = 0.0 <= tool_obs.reward <= 1.0
-        check("Reward in valid range [0,1]", valid_range, f"sample={tool_obs.reward}")
+        valid_range = 0.0 < tool_obs.reward < 1.0
+        check("Reward in valid range (0,1)", valid_range, f"sample={tool_obs.reward}")
     except Exception as e:
         check("Reward verification failed", False, str(e))
 
