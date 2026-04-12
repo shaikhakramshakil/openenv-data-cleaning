@@ -3,217 +3,121 @@
 #
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
-"""
-OpenEnv client for the Data Cleaning environment.
 
-Inherits from openenv.core.EnvClient when available, with fallback
-to a standalone implementation for local development.
-"""
+"""Data Cleaning Environment Client."""
 
-import asyncio
-import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
-from models import DataCleaningAction, DataCleaningObservation, DataCleaningState
+from openenv.core import EnvClient
+from openenv.core.client_types import StepResult
+from openenv.core.env_server.types import State
 
-# Try to import openenv.core types
-try:
-    from openenv.core import EnvClient
-    from openenv.core.client_types import StepResult
-    from openenv.core.env_server.types import State
-    _HAS_OPENENV_CORE = True
-except ImportError:
-    _HAS_OPENENV_CORE = False
+from .models import DataCleaningAction, DataCleaningObservation
 
 
-if _HAS_OPENENV_CORE:
-    class DataCleaningEnv(EnvClient[DataCleaningAction, DataCleaningObservation, State]):
+class DataCleaningEnv(EnvClient[DataCleaningAction, DataCleaningObservation, State]):
+    """
+    Client for the Data Cleaning Environment.
+
+    This client maintains a persistent WebSocket connection to the environment server,
+    enabling efficient multi-step interactions with lower latency.
+    Each client instance has its own dedicated environment session on the server.
+
+    Example:
+        >>> # Connect to a running server
+        >>> from openenv_data_cleaning import DataCleaningEnv, DataCleaningAction
+        >>>
+        >>> env = DataCleaningEnv(base_url="http://localhost:7860")
+        >>> result = env.reset(task_name='task_1_identify')
+        >>> print(f"Task: {result.observation.task_description}")
+        >>>
+        >>> # Use a tool
+        >>> result = env.step(DataCleaningAction(action_type='check_schema', value=''))
+        >>> print(f"Schema: {result.observation.tool_output}")
+        >>>
+        >>> # Submit answer
+        >>> result = env.step(DataCleaningAction(
+        ...     action_type='identify_errors',
+        ...     value='{"row_ids": [2, 5, 8]}'
+        ... ))
+        >>> print(f"Score: {result.observation.reward}")
+        >>> env.close()
+
+    Example with Docker:
+        >>> client = DataCleaningEnv.from_docker_image("data-cleaning-env:latest")
+        >>> try:
+        ...     result = client.reset(task_name='task_1_identify')
+        ...     result = client.step(DataCleaningAction(
+        ...         action_type='identify_errors',
+        ...         value='{"row_ids": [2, 5, 8]}'
+        ...     ))
+        ... finally:
+        ...     client.close()
+    """
+
+    def _step_payload(self, action: DataCleaningAction) -> Dict:
         """
-        Client for interacting with the Data Cleaning environment server.
+        Convert DataCleaningAction to JSON payload for step message.
 
-        Inherits from openenv.core.EnvClient for spec compliance.
+        Args:
+            action: DataCleaningAction instance
+
+        Returns:
+            Dictionary representation suitable for JSON encoding
         """
+        return {
+            "action_type": action.action_type,
+            "value": action.value,
+        }
 
-        def _step_payload(self, action: DataCleaningAction) -> Dict:
-            """Convert DataCleaningAction to JSON payload for step message."""
-            return {
-                "action_type": action.action_type,
-                "value": action.value,
-            }
-
-        def _parse_result(self, payload: Dict) -> StepResult[DataCleaningObservation]:
-            """Parse server response into StepResult[DataCleaningObservation]."""
-            obs_data = payload.get("observation", {})
-            observation = DataCleaningObservation(
-                dataset_text=obs_data.get("dataset_text", ""),
-                task_name=obs_data.get("task_name", ""),
-                task_description=obs_data.get("task_description", ""),
-                available_actions=obs_data.get("available_actions", []),
-                feedback=obs_data.get("feedback", ""),
-                tool_output=obs_data.get("tool_output"),
-                step_number=obs_data.get("step_number", 0),
-                max_steps=obs_data.get("max_steps", 15),
-                num_rows=obs_data.get("num_rows", 0),
-                num_columns=obs_data.get("num_columns", 0),
-                column_names=obs_data.get("column_names", []),
-                done=payload.get("done", False),
-                reward=payload.get("reward", 0.0),
-                metadata=obs_data.get("metadata", {}),
-            )
-            return StepResult(
-                observation=observation,
-                reward=payload.get("reward", 0.0),
-                done=payload.get("done", False),
-            )
-
-        def _parse_state(self, payload: Dict) -> State:
-            """Parse server response into State object."""
-            return State(
-                episode_id=payload.get("episode_id", ""),
-                step_count=payload.get("step_count", 0),
-            )
-
-else:
-    # Fallback: standalone client when openenv.core is not available
-    import websockets
-
-    class DataCleaningEnv:
+    def _parse_result(self, payload: Dict) -> StepResult[DataCleaningObservation]:
         """
-        Standalone client for interacting with the Data Cleaning environment server.
+        Parse server response into StepResult[DataCleaningObservation].
 
-        Fallback implementation when openenv.core is not available.
-        Supports both WebSocket (for multi-step sessions) and HTTP (for debugging).
+        Args:
+            payload: JSON response data from server
+
+        Returns:
+            StepResult with DataCleaningObservation
         """
+        obs_data = payload.get("observation", {})
+        observation = DataCleaningObservation(
+            dataset_text=obs_data.get("dataset_text", ""),
+            task_name=obs_data.get("task_name", ""),
+            task_description=obs_data.get("task_description", ""),
+            available_actions=obs_data.get("available_actions", []),
+            feedback=obs_data.get("feedback", ""),
+            tool_output=obs_data.get("tool_output"),
+            step_number=obs_data.get("step_number", 0),
+            max_steps=obs_data.get("max_steps", 15),
+            num_rows=obs_data.get("num_rows", 0),
+            num_columns=obs_data.get("num_columns", 0),
+            column_names=obs_data.get("column_names", []),
+            done=payload.get("done", False),
+            reward=payload.get("reward"),
+            metadata=obs_data.get("metadata", {}),
+        )
 
-        def __init__(self, base_url: str = "http://localhost:8000"):
-            """
-            Initialize the client.
+        return StepResult(
+            observation=observation,
+            reward=payload.get("reward"),
+            done=payload.get("done", False),
+        )
 
-            Args:
-                base_url: The HTTP URL of the environment server.
-            """
-            self.base_url = base_url.rstrip("/")
-            self.ws_url = self.base_url.replace("http://", "ws://").replace("https://", "wss://") + "/ws"
-            self._ws = None
+    def _parse_state(self, payload: Dict) -> State:
+        """
+        Parse server response into State object.
 
-        async def async_connect(self):
-            """Establish a WebSocket connection."""
-            self._ws = await websockets.connect(self.ws_url)
+        Args:
+            payload: JSON response from state request
 
-        async def async_close(self):
-            """Close the WebSocket connection."""
-            if self._ws:
-                try:
-                    await self._ws.send(json.dumps({"type": "close", "data": {}}))
-                except Exception:
-                    pass
-                await self._ws.close()
-                self._ws = None
-
-        async def async_reset(self, task_name: str = "task_1_identify", **kwargs) -> DataCleaningObservation:
-            """Reset the environment and return initial observation."""
-            if self._ws is None:
-                await self.async_connect()
-
-            message = {
-                "type": "reset",
-                "data": {"task_name": task_name, **kwargs},
-            }
-            await self._ws.send(json.dumps(message))
-            response = json.loads(await self._ws.recv())
-
-            if response.get("type") == "error":
-                raise RuntimeError(f"Reset failed: {response['data']['message']}")
-
-            return self._parse_result(response["data"])
-
-        async def async_step(self, action: DataCleaningAction) -> DataCleaningObservation:
-            """Execute an action in the environment."""
-            if self._ws is None:
-                raise RuntimeError("Not connected. Call async_reset() first.")
-
-            message = {
-                "type": "step",
-                "data": {
-                    "action_type": action.action_type,
-                    "value": action.value,
-                },
-            }
-            await self._ws.send(json.dumps(message))
-            response = json.loads(await self._ws.recv())
-
-            if response.get("type") == "error":
-                raise RuntimeError(f"Step failed: {response['data']['message']}")
-
-            return self._parse_result(response["data"])
-
-        async def async_state(self) -> DataCleaningState:
-            """Get the current episode state."""
-            if self._ws is None:
-                raise RuntimeError("Not connected. Call async_reset() first.")
-
-            message = {"type": "state", "data": {}}
-            await self._ws.send(json.dumps(message))
-            response = json.loads(await self._ws.recv())
-
-            if response.get("type") == "error":
-                raise RuntimeError(f"State failed: {response['data']['message']}")
-
-            return self._parse_state(response["data"])
-
-        def reset(self, task_name: str = "task_1_identify", **kwargs) -> DataCleaningObservation:
-            """Synchronous reset."""
-            return asyncio.get_event_loop().run_until_complete(
-                self.async_reset(task_name=task_name, **kwargs)
-            )
-
-        def step(self, action: DataCleaningAction) -> DataCleaningObservation:
-            """Synchronous step."""
-            return asyncio.get_event_loop().run_until_complete(self.async_step(action))
-
-        def state(self) -> DataCleaningState:
-            """Synchronous state."""
-            return asyncio.get_event_loop().run_until_complete(self.async_state())
-
-        def close(self):
-            """Synchronous close."""
-            return asyncio.get_event_loop().run_until_complete(self.async_close())
-
-        def _parse_result(self, payload: Dict[str, Any]) -> DataCleaningObservation:
-            """Parse a server response into an Observation."""
-            obs_data = payload.get("observation", {})
-            return DataCleaningObservation(
-                dataset_text=obs_data.get("dataset_text", ""),
-                task_name=obs_data.get("task_name", ""),
-                task_description=obs_data.get("task_description", ""),
-                available_actions=obs_data.get("available_actions", []),
-                feedback=obs_data.get("feedback", ""),
-                step_number=obs_data.get("step_number", 0),
-                max_steps=obs_data.get("max_steps", 15),
-                num_rows=obs_data.get("num_rows", 0),
-                num_columns=obs_data.get("num_columns", 0),
-                column_names=obs_data.get("column_names", []),
-                done=payload.get("done", False),
-                reward=payload.get("reward", 0.0),
-                metadata=obs_data.get("metadata", {}),
-            )
-
-        def _parse_state(self, payload: Dict[str, Any]) -> DataCleaningState:
-            """Parse a state response into a State."""
-            return DataCleaningState(
-                episode_id=payload.get("episode_id", ""),
-                step_count=payload.get("step_count", 0),
-                task_name=payload.get("task_name", ""),
-                total_errors=payload.get("total_errors", 0),
-                cumulative_reward=payload.get("cumulative_reward", 0.0),
-            )
-
-        async def __aenter__(self):
-            await self.async_connect()
-            return self
-
-        async def __aexit__(self, *args):
-            await self.async_close()
+        Returns:
+            State object with episode_id and step_count
+        """
+        return State(
+            episode_id=payload.get("episode_id"),
+            step_count=payload.get("step_count", 0),
+        )
 
 
 # Backwards compatibility alias

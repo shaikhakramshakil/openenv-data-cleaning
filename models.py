@@ -5,107 +5,60 @@
 # LICENSE file in the root directory of this source tree.
 
 """
-Type-safe models for the Data Cleaning OpenEnv environment.
+Data models for the Data Cleaning Environment.
 
-Uses Pydantic BaseModel as required by the OpenEnv spec for typed
-Action, Observation, and State models between client and server.
-
-Uses openenv.core types with fallback for standalone operation.
+These models define the action, observation, and state types used by the
+OpenEnv integration for the data cleaning server.
 """
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
-# Try to use openenv.core types if available, otherwise use standalone models
-try:
-    from openenv.core.env_server.types import Action as BaseAction
-    from openenv.core.env_server.types import Observation as BaseObservation
-    from openenv.core.env_server.types import State as BaseState
-    from openenv.core.env_server.types import StepResult as BaseStepResult
-
-    # Create Action type
-    class DataCleaningAction(BaseAction):
-        action_type: str
-        value: str = ""
-
-    # Create Observation type
-    class DataCleaningObservation(BaseObservation):
-        dataset_text: str = ""
-        task_name: str = ""
-        task_description: str = ""
-        available_actions: List[str] = Field(default_factory=list)
-        feedback: str = ""
-        tool_output: Optional[Any] = None
-        step_number: int = 0
-        max_steps: int = 15
-        num_rows: int = 0
-        num_columns: int = 0
-        column_names: List[str] = Field(default_factory=list)
-        done: bool = False
-        reward: float = 0.0
-        metadata: Dict[str, Any] = Field(default_factory=dict)
-
-    # Create State type
-    class DataCleaningState(BaseState):
-        episode_id: str = ""
-        step_count: int = 0
-        task_name: str = ""
-        total_errors: int = 0
-        cumulative_reward: float = 0.0
-
-    # Create StepResult type
-    class StepResult(BaseStepResult):
-        observation: Optional[DataCleaningObservation] = None
-        reward: float = 0.0
-        done: bool = False
-
-    USES_OPENENV_CORE = True
-
-except ImportError:
-    # Fallback to standalone pydantic models when openenv.core is not available
-
-    class DataCleaningAction(BaseModel):
-        action_type: str
-        value: str = ""
-
-    class DataCleaningObservation(BaseModel):
-        dataset_text: str = ""
-        task_name: str = ""
-        task_description: str = ""
-        available_actions: List[str] = Field(default_factory=list)
-        feedback: str = ""
-        tool_output: Optional[Any] = None
-        step_number: int = 0
-        max_steps: int = 15
-        num_rows: int = 0
-        num_columns: int = 0
-        column_names: List[str] = Field(default_factory=list)
-        done: bool = False
-        reward: float = 0.0
-        metadata: Dict[str, Any] = Field(default_factory=dict)
-
-    class DataCleaningState(BaseModel):
-        episode_id: str = ""
-        step_count: int = 0
-        task_name: str = ""
-        total_errors: int = 0
-        cumulative_reward: float = 0.0
-
-    class StepResult(BaseModel):
-        observation: Optional[DataCleaningObservation] = None
-        reward: float = 0.0
-        done: bool = False
-
-    USES_OPENENV_CORE = False
+from openenv.core.env_server.types import Action, Observation, State
 
 
-class EvaluationResult(BaseModel):
-    """Result from running an evaluation scenario."""
+class DataCleaningAction(Action):
+    """Action for the Data Cleaning environment."""
 
-    task_name: str = ""
-    reward: float = 0.0
-    done: bool = False
-    steps: int = 0
-    errors_found: int = 0
-    message: str = ""
+    action_type: str = Field(..., description="Type of action to perform")
+    value: str = Field(default="", description="Action payload (JSON string or text)")
+
+
+class DataCleaningObservation(Observation):
+    """Observation returned by the Data Cleaning environment."""
+
+    dataset_text: str = Field(default="", description="Formatted dataset table")
+    task_name: str = Field(default="", description="Current task identifier")
+    task_description: str = Field(default="", description="Task instructions")
+    available_actions: List[str] = Field(
+        default_factory=list, description="Valid actions for current task"
+    )
+    feedback: str = Field(default="", description="Feedback from last action")
+    tool_output: Optional[Any] = Field(
+        default=None, description="Output from tool-use actions"
+    )
+    step_number: int = Field(default=0, description="Current step in episode")
+    max_steps: int = Field(default=15, description="Maximum steps allowed")
+    num_rows: int = Field(default=0, description="Number of rows in dataset")
+    num_columns: int = Field(default=0, description="Number of columns in dataset")
+    column_names: List[str] = Field(
+        default_factory=list, description="Column names in dataset"
+    )
+
+
+class DataCleaningState(State):
+    """State for the Data Cleaning environment with task-specific fields."""
+
+    task_name: str = Field(default="", description="Current task name")
+    total_errors: int = Field(default=0, description="Total errors in dataset")
+    cumulative_reward: float = Field(
+        default=0.0, description="Cumulative reward this episode"
+    )
+
+
+__all__ = [
+    "DataCleaningAction",
+    "DataCleaningObservation",
+    "DataCleaningState",
+]

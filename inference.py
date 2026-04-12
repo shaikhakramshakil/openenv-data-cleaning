@@ -27,8 +27,8 @@ Optional:
 
 Log format (mandatory):
     [START] task=<task> env=<env> model=<model>
-    [STEP] step=<n> action=<action> reward=<r> done=<bool> error=<error|null>
-    [END] success=<bool> steps=<n> score=<s> rewards=<r1,r2,...>
+    [STEP]  step=<n> action=<action> reward=<r> done=<bool> error=<error|null>
+    [END]   success=<bool> steps=<n> rewards=<r1,r2,...>
 """
 
 import asyncio
@@ -44,7 +44,9 @@ from openai import OpenAI
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Llama-3.3-70B-Instruct")
 HF_TOKEN = os.getenv("HF_TOKEN")
-LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
+
+if HF_TOKEN is None:
+    raise ValueError("HF_TOKEN environment variable is required")
 
 ENV_NAME = "data-cleaning-env"
 # Default to 7860 (HF Spaces port) - use 8000 for local dev with uvicorn
@@ -64,7 +66,7 @@ def log_step(step: int, action: str, reward: float, done: bool, error=None):
 
 def log_end(success: bool, steps: int, score: float, rewards: list):
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
-    print(f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}", flush=True)
+    print(f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str}", flush=True)
 
 
 # ─── LLM Agent ────────────────────────────────────────────────────────
@@ -303,30 +305,10 @@ async def run_task(task_name: str, llm_client: OpenAI) -> float:
 
 async def main():
     """Run all tasks and report scores."""
-    print("=" * 60)
-    print(f"Data Cleaning Environment — Baseline Inference")
-    print(f"Model: {MODEL_NAME}")
-    print(f"Environment: {ENV_URL}")
-    print("=" * 60)
-
     llm_client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
-    scores = {}
     for task in TASKS:
-        print(f"\n{'─' * 40}")
-        print(f"Running: {task}")
-        print(f"{'─' * 40}")
-        score = await run_task(task, llm_client)
-        scores[task] = score
-        print(f"Task {task} score: {score:.3f}")
-
-    print(f"\n{'=' * 60}")
-    print("FINAL SCORES:")
-    for task, score in scores.items():
-        print(f"  {task}: {score:.3f}")
-    avg = sum(scores.values()) / len(scores) if scores else 0.0
-    print(f"  Average: {avg:.3f}")
-    print(f"{'=' * 60}")
+        await run_task(task, llm_client)
 
 
 if __name__ == "__main__":

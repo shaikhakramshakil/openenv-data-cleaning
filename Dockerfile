@@ -3,14 +3,15 @@ FROM python:3.11-slim
 # Set metadata
 LABEL maintainer="shaikhakramshakil"
 LABEL description="OpenEnv Data Cleaning Environment"
-LABEL version="1.0.0"
+LABEL version="1.1.0"
 
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (git needed for pip install from GitHub)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for Docker layer caching
@@ -25,7 +26,6 @@ ENV PORT=7860
 ENV HOST=0.0.0.0
 ENV WORKERS=2
 ENV MAX_CONCURRENT_ENVS=100
-ENV OPENENV_TASK=task_1_identify
 
 # Expose port
 EXPOSE 7860
