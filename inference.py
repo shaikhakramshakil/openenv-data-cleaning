@@ -73,7 +73,11 @@ def log_step(step: int, action: str, reward: float, done: bool, error=None):
 
 def log_end(success: bool, steps: int, score: float, rewards: list):
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
-    print(f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str}", flush=True)
+    normalized_score = normalize_task_score(score)
+    print(
+        f"[END] success={str(success).lower()} steps={steps} score={normalized_score:.3f} rewards={rewards_str}",
+        flush=True,
+    )
 
 
 # ─── LLM Agent ────────────────────────────────────────────────────────
@@ -234,6 +238,7 @@ async def run_task(task_name: str, llm_client: OpenAI) -> float:
                 dataset_text = obs.get("dataset_text", "")
                 task_description = obs.get("task_description", "")
                 feedback = obs.get("feedback", "")
+                done = False
 
                 # Agent loop: call LLM, send action, get feedback, refine
                 for step in range(1, max_steps + 1):

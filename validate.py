@@ -154,6 +154,7 @@ def main():
     check("Has [START] log format", "[START]" in content)
     check("Has [STEP] log format", "[STEP]" in content)
     check("Has [END] log format", "[END]" in content)
+    check("Has [END] score=<s> field", "score=" in content)
     check("Uses OpenAI Client", "from openai import OpenAI" in content)
     check("Has API_BASE_URL env var", "API_BASE_URL" in content)
     check("Has MODEL_NAME env var", "MODEL_NAME" in content)
