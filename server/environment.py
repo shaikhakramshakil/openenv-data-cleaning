@@ -420,11 +420,11 @@ class DataCleaningEnvironment(Environment):
             pred = float(value.replace("$", "").strip())
             diff = abs(pred - total)
             if diff < 0.01:
-                score = 1.0
+                score = SCORE_MAX
             elif diff < 10:
                 score = 0.5
             else:
-                score = 0.0
+                score = SCORE_EPSILON
             reward = _normalize_task_score(score)
             self._update_best(reward, {"answer": value})
             return self._make_observation(
